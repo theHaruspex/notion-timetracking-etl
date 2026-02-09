@@ -8,9 +8,10 @@ Small TypeScript (Node.js) data integration service that reads from Notion and n
   - `workflow_definitions`
   - `workflow_stages`
   - `timeslices`
-- Captures raw records in a vendor-agnostic `RawRecord` shape.
+- Captures raw records in a vendor-agnostic `RawRecord` shape (all properties, keyed by property ID).
 - Persists raw pulls as JSONL under `data/raw/...`.
 - Normalizes raw records into canonical objects and writes JSONL under `data/canon/...`.
+- Uses deterministic canonical extraction via configured Notion **property IDs**.
 
 ## Out of scope (intentionally not implemented)
 
@@ -38,17 +39,29 @@ cp .env.example .env
 
 ## Environment variables
 
-Required:
+Required (`.env` secrets-only):
 
 - `NOTION_TOKEN`
-- `NOTION_DB_WORKFLOW_DEFINITIONS`
-- `NOTION_DB_WORKFLOW_STAGES`
-- `NOTION_DB_TIMESLICES`
 
-Optional:
+Database IDs are hardcoded in `src/config/env.ts`.
 
-- `DATA_DIR` (default `./data`)
-- `LOG_LEVEL` (parsed only, not used for filtering yet)
+## Notion schema audit + property ID setup
+
+1. Audit the three configured databases and generate schema artifacts:
+
+```bash
+npm run cli -- audit:notion-schema
+```
+
+This command will:
+
+- print `propertyName | propertyId | type` for each database
+- write machine-readable schema to `data/audit/notion-schema.json`
+- generate/update `src/config/notionSchema.generated.ts`
+
+2. Fill property ID bindings in `src/config/env.ts` under `notionConfig.propertyIds`.
+
+Normalization fails fast with a clear error if required property IDs are missing.
 
 ## Commands
 

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { RawRecord } from '../ingress/rawRecord.js';
+import { notionConfig } from '../config/env.js';
 import { stableEntityId } from './rules.js';
 
 export const workflowDefinitionSchema = z.object({
@@ -42,12 +43,15 @@ export function buildWorkflowDefinition(record: RawRecord): WorkflowDefinition |
   const rawProperties = Object.fromEntries(
     Object.entries(record.properties).map(([propertyId, property]) => [propertyId, property.rawValue])
   );
+  const configuredTitleId = notionConfig.propertyIds.workflowDefinitions.title;
+  const configuredTitle =
+    configuredTitleId.trim().length > 0 ? extractTitleFromRawProperties({ [configuredTitleId]: rawProperties[configuredTitleId] }) : null;
 
   return workflowDefinitionSchema.parse({
     workflow_definition_id: stableEntityId('workflow_definition', record.pageId),
     source_page_id: record.pageId,
     source_database_id: record.databaseId,
-    page_title: extractTitleFromRawProperties(rawProperties),
+    page_title: configuredTitle ?? extractTitleFromRawProperties(rawProperties),
     created_time:
       typeof record.metadata?.created_time === 'string' ? (record.metadata.created_time as string) : null,
     last_edited_time: record.lastEditedTime ?? null,

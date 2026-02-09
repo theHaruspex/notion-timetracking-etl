@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { RawRecord } from '../ingress/rawRecord.js';
+import { notionConfig } from '../config/env.js';
 import { normalizeNullableNumber, normalizeNullableString, sortKey, stableEntityId } from './rules.js';
 
 export const workflowStageSchema = z.object({
@@ -18,17 +19,16 @@ export const workflowStageSchema = z.object({
 
 export type WorkflowStage = z.infer<typeof workflowStageSchema>;
 
-function relationIds(rawValue: unknown): string[] {
+function relationId(rawValue: unknown): string | null {
   if (!rawValue || typeof rawValue !== 'object') {
-    return [];
+    return null;
   }
-  const value = rawValue as { relation?: Array<{ id?: string }> };
-  if (!Array.isArray(value.relation)) {
-    return [];
+  const value = rawValue as { type?: string; relation?: Array<{ id?: string }> };
+  if (value.type !== 'relation' || !Array.isArray(value.relation) || value.relation.length === 0) {
+    return null;
   }
-  return value.relation
-    .map((item) => item.id)
-    .filter((item): item is string => typeof item === 'string' && item.length > 0);
+  const first = value.relation[0]?.id;
+  return typeof first === 'string' && first.length > 0 ? first : null;
 }
 
 function firstDisplayText(rawValue: unknown): string | null {
@@ -65,37 +65,43 @@ function firstDisplayText(rawValue: unknown): string | null {
   return null;
 }
 
+function extractNumber(rawValue: unknown): number | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const typed = rawValue as { type?: string; number?: unknown };
+  if (typed.type !== 'number') {
+    return null;
+  }
+  return normalizeNullableNumber(typed.number);
+}
+
+function requireConfiguredWorkflowStagePropertyIds(): void {
+  const required = notionConfig.propertyIds.workflowStages;
+  const missing = Object.entries(required)
+    .filter(([, value]) => value.trim().length === 0)
+    .map(([key]) => key);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing configured property IDs for workflowStages: ${missing.join(
+        ', '
+      )}. Run: npm run cli -- audit:notion-schema and fill src/config/env.ts.`
+    );
+  }
+}
+
 export function buildWorkflowStage(record: RawRecord): WorkflowStage | null {
   if (record.entityType !== 'page' || !record.pageId) {
     return null;
   }
+  requireConfiguredWorkflowStagePropertyIds();
+  const ids = notionConfig.propertyIds.workflowStages;
 
-  const values = Object.values(record.properties).map((property) => property.rawValue);
-  const allRelationTargets = values.flatMap((value) => relationIds(value));
+  const workflowDefinitionSource = relationId(record.properties[ids.workflowDefinitionRel]?.rawValue);
   const workflowDefinitionId =
-    allRelationTargets.length > 0
-      ? stableEntityId('workflow_definition', allRelationTargets[0])
-      : null;
-
-  let stageNumber: number | null = null;
-  let stageLabel: string | null = null;
-
-  for (const value of values) {
-    if (stageNumber === null && value && typeof value === 'object') {
-      const typed = value as { type?: string; number?: unknown };
-      if (typed.type === 'number') {
-        stageNumber = normalizeNullableNumber(typed.number);
-      }
-    }
-
-    if (stageLabel === null) {
-      stageLabel = firstDisplayText(value);
-    }
-
-    if (stageNumber !== null && stageLabel !== null) {
-      break;
-    }
-  }
+    workflowDefinitionSource ? stableEntityId('workflow_definition', workflowDefinitionSource) : null;
+  const stageNumber = extractNumber(record.properties[ids.stageNumber]?.rawValue);
+  const stageLabel = firstDisplayText(record.properties[ids.stageLabel]?.rawValue);
 
   return workflowStageSchema.parse({
     workflow_stage_id: stableEntityId('workflow_stage', record.pageId),

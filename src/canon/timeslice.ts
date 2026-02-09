@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { RawRecord } from '../ingress/rawRecord.js';
+import { notionConfig } from '../config/env.js';
 import { normalizeNullableString, stableEntityId, timesliceIdFromPageId } from './rules.js';
 
 export const timesliceSchema = z.object({
@@ -33,6 +34,18 @@ function extractDateStart(rawValue: unknown): string | null {
   return typed.date?.start ?? null;
 }
 
+function extractFirstRelationId(rawValue: unknown): string | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const typed = rawValue as { type?: string; relation?: Array<{ id?: string }> };
+  if (typed.type !== 'relation' || !Array.isArray(typed.relation) || typed.relation.length === 0) {
+    return null;
+  }
+  const first = typed.relation[0]?.id;
+  return typeof first === 'string' && first.length > 0 ? first : null;
+}
+
 function extractTitle(rawValue: unknown): string | null {
   if (!rawValue || typeof rawValue !== 'object') {
     return null;
@@ -47,19 +60,18 @@ function extractTitle(rawValue: unknown): string | null {
   return normalizeNullableString(joined);
 }
 
-function extractRelationIds(rawValue: unknown): string[] {
-  if (!rawValue || typeof rawValue !== 'object') {
-    return [];
+function requireConfiguredTimeslicePropertyIds(): void {
+  const required = notionConfig.propertyIds.timeslices;
+  const missing = Object.entries(required)
+    .filter(([, value]) => value.trim().length === 0)
+    .map(([key]) => key);
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing configured property IDs for timeslices: ${missing.join(
+        ', '
+      )}. Run: npm run cli -- audit:notion-schema and fill src/config/env.ts.`
+    );
   }
-
-  const typed = rawValue as { type?: string; relation?: Array<{ id?: string }> };
-  if (typed.type !== 'relation' || !Array.isArray(typed.relation)) {
-    return [];
-  }
-
-  return typed.relation
-    .map((entry) => entry.id)
-    .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
 }
 
 function computeDurationSeconds(startedAt: string | null, endedAt: string | null): number | null {
@@ -78,27 +90,37 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
   if (record.entityType !== 'page' || !record.pageId) {
     return null;
   }
+  requireConfiguredTimeslicePropertyIds();
 
   const rawProperties = Object.fromEntries(
     Object.entries(record.properties).map(([propertyId, property]) => [propertyId, property.rawValue])
   );
 
-  const relationTargets = Object.values(rawProperties).flatMap((rawValue) => extractRelationIds(rawValue));
-  const dateValues = Object.values(rawProperties)
-    .map((rawValue) => extractDateStart(rawValue))
-    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+  const ids = notionConfig.propertyIds.timeslices;
+  const workflowRelationRaw = rawProperties[ids.workflowDefinitionRel];
+  const fromStageRelationRaw = rawProperties[ids.fromStageRel];
+  const toStageRelationRaw = rawProperties[ids.toStageRel];
+  const startedDateRaw = rawProperties[ids.startedAtDate];
+  const endedDateRaw = rawProperties[ids.endedAtDate];
 
   const pageTitle =
+    (rawProperties[notionConfig.propertyIds.workflowDefinitions.title]
+      ? extractTitle(rawProperties[notionConfig.propertyIds.workflowDefinitions.title])
+      : null) ??
     Object.values(rawProperties)
       .map((rawValue) => extractTitle(rawValue))
-      .find((value): value is string => typeof value === 'string' && value.length > 0) ?? null;
+      .find((value): value is string => typeof value === 'string' && value.length > 0) ??
+    null;
 
+  const workflowDefinitionSource = extractFirstRelationId(workflowRelationRaw);
+  const fromStepSource = extractFirstRelationId(fromStageRelationRaw);
+  const toStepSource = extractFirstRelationId(toStageRelationRaw);
   const workflowDefinitionId =
-    relationTargets.length > 0 ? stableEntityId('workflow_definition', relationTargets[0]) : null;
-  const fromStepId = relationTargets.length > 1 ? stableEntityId('workflow_stage', relationTargets[1]) : null;
-  const toStepId = relationTargets.length > 2 ? stableEntityId('workflow_stage', relationTargets[2]) : null;
-  const startedAt = dateValues.at(0) ?? null;
-  const endedAt = dateValues.at(1) ?? null;
+    workflowDefinitionSource ? stableEntityId('workflow_definition', workflowDefinitionSource) : null;
+  const fromStepId = fromStepSource ? stableEntityId('workflow_stage', fromStepSource) : null;
+  const toStepId = toStepSource ? stableEntityId('workflow_stage', toStepSource) : null;
+  const startedAt = extractDateStart(startedDateRaw);
+  const endedAt = extractDateStart(endedDateRaw);
 
   return timesliceSchema.parse({
     timeslice_id: timesliceIdFromPageId(record.pageId),

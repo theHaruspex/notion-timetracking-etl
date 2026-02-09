@@ -1,26 +1,158 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { notionSchema } from './notionSchema.generated.js';
 
 dotenv.config();
 
 const envSchema = z.object({
-  NOTION_TOKEN: z.string().min(1),
-  NOTION_DB_WORKFLOW_DEFINITIONS: z.string().min(1),
-  NOTION_DB_WORKFLOW_STAGES: z.string().min(1),
-  NOTION_DB_TIMESLICES: z.string().min(1),
-  DATA_DIR: z.string().default('./data'),
-  LOG_LEVEL: z.string().default('info')
+  NOTION_TOKEN: z.string().min(1)
 });
 
 export type AppConfig = z.infer<typeof envSchema> & {
+  DATA_DIR: string;
+  LOG_LEVEL: string;
   resolvedDataDir: string;
 };
 
 export function loadConfig(): AppConfig {
   const parsed = envSchema.parse(process.env);
+  const DATA_DIR = './data';
+  const LOG_LEVEL = 'info';
+
   return {
     ...parsed,
-    resolvedDataDir: path.resolve(parsed.DATA_DIR)
+    DATA_DIR,
+    LOG_LEVEL,
+    resolvedDataDir: path.resolve(DATA_DIR)
   };
+}
+
+type DatasetKey = 'workflowDefinitions' | 'workflowStages' | 'timeslices';
+type NotionSchemaShape = Record<
+  DatasetKey,
+  {
+    properties: Record<string, { id: string; type: string }>;
+  }
+>;
+
+function getGeneratedPropertyId(
+  dataset: DatasetKey,
+  propertyName: string | undefined
+): string {
+  if (!propertyName) {
+    return '';
+  }
+  const typedSchema = notionSchema as unknown as NotionSchemaShape;
+  const match = typedSchema[dataset]?.properties?.[propertyName];
+  return typeof match?.id === 'string' ? match.id : '';
+}
+
+const propertyNameMappingHints = {
+  timeslices: {
+    workflowDefinitionRel: 'Workflow Record',
+    fromStageRel: 'From Event',
+    toStageRel: 'To Event',
+    startedAtDate: 'From Time',
+    endedAtDate: 'To Time'
+  },
+  workflowStages: {
+    workflowDefinitionRel: 'Workflow Definition',
+    stageNumber: 'Workflow Step',
+    stageLabel: 'Label Name'
+  },
+  workflowDefinitions: {
+    title: 'Name'
+  }
+} as const;
+
+export const notionConfig = {
+  databaseIds: {
+    workflowDefinitions: 'f12d805a-4a5f-4281-b6fe-333be2d52c9c',
+    workflowStages: '24d3b599-e426-46de-a8f0-3dcad69e28c7',
+    timeslices: '87f99225-0658-4079-a0c5-8a81feb35510'
+  },
+  propertyIds: {
+    timeslices: {
+      workflowDefinitionRel: getGeneratedPropertyId(
+        'timeslices',
+        propertyNameMappingHints.timeslices.workflowDefinitionRel
+      ),
+      fromStageRel: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.fromStageRel),
+      toStageRel: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.toStageRel),
+      startedAtDate: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.startedAtDate),
+      endedAtDate: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.endedAtDate)
+    },
+    workflowStages: {
+      workflowDefinitionRel: getGeneratedPropertyId(
+        'workflowStages',
+        propertyNameMappingHints.workflowStages.workflowDefinitionRel
+      ),
+      stageNumber: getGeneratedPropertyId('workflowStages', propertyNameMappingHints.workflowStages.stageNumber),
+      stageLabel: getGeneratedPropertyId('workflowStages', propertyNameMappingHints.workflowStages.stageLabel)
+    },
+    workflowDefinitions: {
+      title: getGeneratedPropertyId(
+        'workflowDefinitions',
+        propertyNameMappingHints.workflowDefinitions.title
+      )
+    }
+  }
+} as const;
+
+export function overrideNotionPropertyIdsForTests(input: {
+  timeslices?: Partial<(typeof notionConfig.propertyIds.timeslices)>;
+  workflowStages?: Partial<(typeof notionConfig.propertyIds.workflowStages)>;
+  workflowDefinitions?: Partial<(typeof notionConfig.propertyIds.workflowDefinitions)>;
+}): void {
+  if (input.timeslices) {
+    Object.assign(notionConfig.propertyIds.timeslices as Record<string, string>, input.timeslices);
+  }
+  if (input.workflowStages) {
+    Object.assign(notionConfig.propertyIds.workflowStages as Record<string, string>, input.workflowStages);
+  }
+  if (input.workflowDefinitions) {
+    Object.assign(
+      notionConfig.propertyIds.workflowDefinitions as Record<string, string>,
+      input.workflowDefinitions
+    );
+  }
+}
+
+export function validateConfiguredPropertyIdsOrThrow(): void {
+  const missing: Array<{ dataset: string; key: string }> = [];
+
+  const check = (dataset: string, map: Record<string, string>) => {
+    for (const [key, value] of Object.entries(map)) {
+      if (value.trim().length === 0) {
+        missing.push({ dataset, key });
+      }
+    }
+  };
+
+  check('timeslices', notionConfig.propertyIds.timeslices as unknown as Record<string, string>);
+  check('workflowStages', notionConfig.propertyIds.workflowStages as unknown as Record<string, string>);
+  check(
+    'workflowDefinitions',
+    notionConfig.propertyIds.workflowDefinitions as unknown as Record<string, string>
+  );
+
+  if (missing.length === 0) {
+    return;
+  }
+
+  const grouped = missing
+    .reduce<Record<string, string[]>>((acc, item) => {
+      acc[item.dataset] = acc[item.dataset] ?? [];
+      acc[item.dataset].push(item.key);
+      return acc;
+    }, {});
+
+  const details = Object.entries(grouped)
+    .map(([dataset, keys]) => `${dataset}: ${keys.join(', ')}`)
+    .join('; ');
+
+  throw new Error(
+    `Missing configured Notion property IDs (${details}). Run: npm run cli -- audit:notion-schema, then fill property IDs in src/config/env.ts.`
+  );
 }
