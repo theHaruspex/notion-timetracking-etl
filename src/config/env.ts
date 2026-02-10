@@ -8,6 +8,14 @@ const envSchema = z.object({
   NOTION_TOKEN: z.string().min(1)
 });
 
+const pbiEnvSchema = z.object({
+  PBI_TENANT_ID: z.string().optional(),
+  PBI_CLIENT_ID: z.string().optional(),
+  PBI_CLIENT_SECRET: z.string().optional(),
+  PBI_WORKSPACE_ID: z.string().optional(),
+  PBI_DATASET_NAME: z.string().optional()
+});
+
 export type AppConfig = z.infer<typeof envSchema> & {
   DATA_DIR: string;
   LOG_LEVEL: string;
@@ -24,6 +32,57 @@ export function loadConfig(): AppConfig {
     DATA_DIR,
     LOG_LEVEL,
     resolvedDataDir: path.resolve(DATA_DIR)
+  };
+}
+
+export type PbiConfig = {
+  tenantId: string;
+  clientId: string;
+  clientSecret: string;
+  workspaceId: string;
+  datasetName: string;
+};
+
+export function loadPbiConfig(): PbiConfig {
+  const parsed = pbiEnvSchema.parse(process.env);
+  const missing: string[] = [];
+
+  const tenantId = parsed.PBI_TENANT_ID?.trim() ?? '';
+  const clientId = parsed.PBI_CLIENT_ID?.trim() ?? '';
+  const clientSecret = parsed.PBI_CLIENT_SECRET?.trim() ?? '';
+  const workspaceId = parsed.PBI_WORKSPACE_ID?.trim() ?? '';
+  const datasetName = parsed.PBI_DATASET_NAME?.trim() ?? '';
+
+  if (!tenantId) {
+    missing.push('PBI_TENANT_ID');
+  }
+  if (!clientId) {
+    missing.push('PBI_CLIENT_ID');
+  }
+  if (!clientSecret) {
+    missing.push('PBI_CLIENT_SECRET');
+  }
+  if (!workspaceId) {
+    missing.push('PBI_WORKSPACE_ID');
+  }
+  if (!datasetName) {
+    missing.push('PBI_DATASET_NAME');
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required Power BI environment variables: ${missing.join(
+        ', '
+      )}. These are only required for PBI commands.`
+    );
+  }
+
+  return {
+    tenantId,
+    clientId,
+    clientSecret,
+    workspaceId,
+    datasetName
   };
 }
 

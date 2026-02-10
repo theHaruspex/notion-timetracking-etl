@@ -1,5 +1,5 @@
 import { rawRecordSchema, type RawRecord, type RawProperty } from './rawRecord.js';
-import { NotionAdapter, type NotionPageLike } from '../clients/notionAdapter.js';
+import { NotionAdapter, type NotionPageLike } from './notionAdapter.js';
 
 interface DatasetPullInput {
   dataset: string;

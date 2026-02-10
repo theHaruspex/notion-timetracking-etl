@@ -1,15 +1,28 @@
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { Command } from 'commander';
-import { loadConfig, notionConfig, validateConfiguredPropertyIdsOrThrow } from '../config/env.js';
+import {
+  loadConfig,
+  loadPbiConfig,
+  notionConfig,
+  validateConfiguredPropertyIdsOrThrow
+} from '../config/env.js';
 import { utcDateStamp } from '../lib/time.js';
 import { writeJsonlSink } from '../sinks/jsonlSink.js';
 import { log } from '../lib/log.js';
-import { NotionAdapter } from '../clients/notionAdapter.js';
+import { NotionAdapter } from '../ingress/notionAdapter.js';
 import { pullDatasetFromNotion } from '../ingress/pullNotion.js';
 import { latestDatasetDateDir, readRawDatasetForDate } from '../normalize/io.js';
 import { normalizeDatasets } from '../normalize/normalizeDatasets.js';
 import { ensureDir } from '../lib/fs.js';
+import {
+  PowerBiClient,
+  PowerBiServicePrincipalAuth,
+  buildModelSpec,
+  validateSpec,
+  ensureDataset,
+  getDatasetRegistryPath
+} from '../sinks/pbi/index.js';
 
 const DATASET_NAMES = {
   workflow_definitions: 'workflow_definitions',
@@ -180,6 +193,38 @@ async function runAll(): Promise<void> {
   await runNormalize();
 }
 
+async function runPbiProvision(): Promise<void> {
+  const appConfig = loadConfig();
+  const pbiConfig = loadPbiConfig();
+
+  const spec = buildModelSpec(pbiConfig.datasetName);
+  validateSpec(spec);
+
+  const auth = new PowerBiServicePrincipalAuth({
+    tenantId: pbiConfig.tenantId,
+    clientId: pbiConfig.clientId,
+    clientSecret: pbiConfig.clientSecret
+  });
+  const client = new PowerBiClient({ auth });
+
+  const datasetId = await ensureDataset(
+    client,
+    { resolvedDataDir: appConfig.resolvedDataDir },
+    {
+      workspaceId: pbiConfig.workspaceId,
+      datasetName: pbiConfig.datasetName,
+      spec
+    }
+  );
+
+  log.info('pbi provision complete', {
+    workspaceId: pbiConfig.workspaceId,
+    datasetName: pbiConfig.datasetName,
+    datasetId,
+    registryPath: getDatasetRegistryPath({ resolvedDataDir: appConfig.resolvedDataDir })
+  });
+}
+
 const program = new Command();
 program.name('etl-cli').description('Pull + normalize integration data').version('0.1.0');
 
@@ -188,6 +233,10 @@ program
   .command('audit:notion-schema')
   .description('Audit Notion schemas and generate src/config/notionSchema.generated.ts (reference file)')
   .action(runAuditNotionSchema);
+program
+  .command('pbi:provision')
+  .description('Provision Power BI dataset scaffold and persist dataset registry mapping')
+  .action(runPbiProvision);
 program.command('normalize').description('Normalize latest raw records').action(runNormalize);
 program.command('run').description('Run pull:notion then normalize').action(runAll);
 
