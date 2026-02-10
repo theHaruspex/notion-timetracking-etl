@@ -1,7 +1,6 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { z } from 'zod';
-import { notionSchema } from './notionSchema.generated.js';
 
 dotenv.config();
 
@@ -28,45 +27,32 @@ export function loadConfig(): AppConfig {
   };
 }
 
-type DatasetKey = 'workflowDefinitions' | 'workflowStages' | 'timeslices';
-type NotionSchemaShape = Record<
-  DatasetKey,
-  {
-    properties: Record<string, { id: string; type: string }>;
-  }
->;
+type NotionConfig = {
+  databaseIds: {
+    workflowDefinitions: string;
+    workflowStages: string;
+    timeslices: string;
+  };
+  propertyIds: {
+    timeslices: {
+      workflowDefinitionRel: string;
+      fromStageRel: string;
+      toStageRel: string;
+      startedAtDate: string;
+      endedAtDate: string;
+    };
+    workflowStages: {
+      workflowDefinitionRel: string;
+      stageNumber: string;
+      stageLabel: string;
+    };
+    workflowDefinitions: {
+      title: string;
+    };
+  };
+};
 
-function getGeneratedPropertyId(
-  dataset: DatasetKey,
-  propertyName: string | undefined
-): string {
-  if (!propertyName) {
-    return '';
-  }
-  const typedSchema = notionSchema as unknown as NotionSchemaShape;
-  const match = typedSchema[dataset]?.properties?.[propertyName];
-  return typeof match?.id === 'string' ? match.id : '';
-}
-
-const propertyNameMappingHints = {
-  timeslices: {
-    workflowDefinitionRel: 'Workflow Record',
-    fromStageRel: 'From Event',
-    toStageRel: 'To Event',
-    startedAtDate: 'From Time',
-    endedAtDate: 'To Time'
-  },
-  workflowStages: {
-    workflowDefinitionRel: 'Workflow Definition',
-    stageNumber: 'Workflow Step',
-    stageLabel: 'Label Name'
-  },
-  workflowDefinitions: {
-    title: 'Name'
-  }
-} as const;
-
-export const notionConfig = {
+export const notionConfig: NotionConfig = {
   databaseIds: {
     workflowDefinitions: 'f12d805a-4a5f-4281-b6fe-333be2d52c9c',
     workflowStages: '24d3b599-e426-46de-a8f0-3dcad69e28c7',
@@ -74,31 +60,22 @@ export const notionConfig = {
   },
   propertyIds: {
     timeslices: {
-      workflowDefinitionRel: getGeneratedPropertyId(
-        'timeslices',
-        propertyNameMappingHints.timeslices.workflowDefinitionRel
-      ),
-      fromStageRel: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.fromStageRel),
-      toStageRel: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.toStageRel),
-      startedAtDate: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.startedAtDate),
-      endedAtDate: getGeneratedPropertyId('timeslices', propertyNameMappingHints.timeslices.endedAtDate)
+      workflowDefinitionRel: 'U%3CU%7B',
+      fromStageRel: 'yBeO',
+      toStageRel: '%7Dg%40%5E',
+      startedAtDate: 'w%5Czt',
+      endedAtDate: 'cZbu'
     },
     workflowStages: {
-      workflowDefinitionRel: getGeneratedPropertyId(
-        'workflowStages',
-        propertyNameMappingHints.workflowStages.workflowDefinitionRel
-      ),
-      stageNumber: getGeneratedPropertyId('workflowStages', propertyNameMappingHints.workflowStages.stageNumber),
-      stageLabel: getGeneratedPropertyId('workflowStages', propertyNameMappingHints.workflowStages.stageLabel)
+      workflowDefinitionRel: '%5Bn%40l',
+      stageNumber: 'j%5D_%3F',
+      stageLabel: 'title'
     },
     workflowDefinitions: {
-      title: getGeneratedPropertyId(
-        'workflowDefinitions',
-        propertyNameMappingHints.workflowDefinitions.title
-      )
+      title: 'title'
     }
   }
-} as const;
+};
 
 export function overrideNotionPropertyIdsForTests(input: {
   timeslices?: Partial<(typeof notionConfig.propertyIds.timeslices)>;

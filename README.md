@@ -60,6 +60,8 @@ This command will:
 - generate/update `src/config/notionSchema.generated.ts`
 
 2. Fill property ID bindings in `src/config/env.ts` under `notionConfig.propertyIds`.
+   - `src/config/env.ts` is the runtime source of truth for both database IDs and property IDs.
+   - `src/config/notionSchema.generated.ts` is generated for reference only (not used by runtime extraction).
 
 Normalization fails fast with a clear error if required property IDs are missing.
 

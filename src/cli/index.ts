@@ -186,7 +186,7 @@ program.name('etl-cli').description('Pull + normalize integration data').version
 program.command('pull:notion').description('Pull raw records from Notion').action(runPullNotion);
 program
   .command('audit:notion-schema')
-  .description('Audit Notion database schemas and generate src/config/notionSchema.generated.ts')
+  .description('Audit Notion schemas and generate src/config/notionSchema.generated.ts (reference file)')
   .action(runAuditNotionSchema);
 program.command('normalize').description('Normalize latest raw records').action(runNormalize);
 program.command('run').description('Run pull:notion then normalize').action(runAll);
