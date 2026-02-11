@@ -35,7 +35,44 @@ export class PowerBiClient {
   }
 
   async createDatasetInGroup(groupId: string, spec: PbiDatasetSpec): Promise<PowerBiDatasetSummary> {
-    return this.requestJson<PowerBiDatasetSummary>('POST', `/groups/${groupId}/datasets`, spec);
+    const defaultRetentionPolicy = spec.defaultRetentionPolicy ?? 'None';
+    const route = `/groups/${groupId}/datasets?defaultRetentionPolicy=${encodeURIComponent(
+      defaultRetentionPolicy
+    )}`;
+    const body: {
+      name: string;
+      defaultMode: 'Push';
+      tables: Array<{ name: string; columns: Array<{ name: string; dataType: string }> }>;
+      relationships?: Array<{
+        name: string;
+        fromTable: string;
+        fromColumn: string;
+        toTable: string;
+        toColumn: string;
+        crossFilteringBehavior?: string;
+      }>;
+    } = {
+      name: spec.name,
+      defaultMode: 'Push',
+      tables: spec.tables.map((table) => ({
+        name: table.name,
+        columns: table.columns.map((column) => ({
+          name: column.name,
+          dataType: mapColumnTypeForApi(column.dataType)
+        }))
+      }))
+    };
+    if (Array.isArray(spec.relationships) && spec.relationships.length > 0) {
+      body.relationships = spec.relationships.map((relationship) => ({
+        name: relationship.name,
+        fromTable: relationship.fromTable,
+        fromColumn: relationship.fromColumn,
+        toTable: relationship.toTable,
+        toColumn: relationship.toColumn,
+        crossFilteringBehavior: relationship.crossFilteringBehavior
+      }));
+    }
+    return this.requestJson<PowerBiDatasetSummary>('POST', route, body);
   }
 
   async getTablesInGroup(groupId: string, datasetId: string): Promise<PowerBiTableResponse[]> {
@@ -128,3 +165,14 @@ async function safeResponseText(response: Response): Promise<string> {
     return '';
   }
 }
+
+function mapColumnTypeForApi(dataType: string): string {
+  if (dataType === 'DateTime') {
+    return 'Datetime';
+  }
+  if (dataType === 'Boolean') {
+    return 'Bool';
+  }
+  return dataType;
+}
+

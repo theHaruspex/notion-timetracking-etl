@@ -34,7 +34,7 @@ export function wipeAndReload(input: WipeAndReloadInput): WipeAndReloadPlan {
     batches: batchRows(input.tableRowsByName[tableName] ?? [], 10_000)
   }));
 
-  // TODO: add deleteRowsInGroup + postRowsInGroup execution when refresh workflow is finalized.
+  // Planner-only helper. Use executeWipeAndReload() for strict execution (wipe + post).
   return {
     workspaceId: input.workspaceId,
     datasetId: input.datasetId,

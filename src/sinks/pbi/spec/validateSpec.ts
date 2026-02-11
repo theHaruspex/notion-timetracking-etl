@@ -7,7 +7,7 @@ const MAX_NAME_LENGTH = 100;
 const CONTROL_CHAR_REGEX = /[\u0000-\u001F\u007F]/;
 const VALID_CROSS_FILTERING = new Set(['OneDirection', 'BothDirections', 'Automatic']);
 
-function validateName(kind: 'table' | 'column', name: string, context?: string): string {
+function validateName(kind: 'table' | 'column' | 'relationship', name: string, context?: string): string {
   if (name.length === 0) {
     throw new Error(`Invalid spec: ${kind} name cannot be empty${context ? ` (${context})` : ''}.`);
   }
@@ -79,6 +79,12 @@ export function validateSpec(spec: PbiDatasetSpec): void {
   const tableByLowerName = new Map(spec.tables.map((table) => [table.name.toLowerCase(), table]));
 
   for (const relationship of spec.relationships) {
+    validateName(
+      'relationship',
+      relationship.name,
+      `${relationship.fromTable}.${relationship.fromColumn} -> ${relationship.toTable}.${relationship.toColumn}`
+    );
+
     const crossFilteringBehavior = relationship.crossFilteringBehavior;
     if (
       crossFilteringBehavior !== undefined &&

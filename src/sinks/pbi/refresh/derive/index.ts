@@ -1,0 +1,452 @@
+import type { Timeslice as CanonTimeslice } from '../../../../canon/timeslice.js';
+import type { WorkflowDefinition as CanonWorkflowDefinition } from '../../../../canon/workflowDefinition.js';
+import type { WorkflowStage as CanonWorkflowStage } from '../../../../canon/workflowStage.js';
+import type {
+  ColorPaletteRow,
+  DimDateRow,
+  DimPlaybackFrameRow,
+  DimStageRow,
+  DimWorkflowRow,
+  FactTimesliceRow,
+  PbiTableRowsByName
+} from './types.js';
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+const OLE_AUTOMATION_EPOCH_MS = Date.UTC(1899, 11, 30, 0, 0, 0, 0);
+const LOS_ANGELES_TIME_ZONE = 'America/Los_Angeles';
+
+const DATE_PARTS_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: LOS_ANGELES_TIME_ZONE
+});
+const MONTH_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  timeZone: LOS_ANGELES_TIME_ZONE
+});
+const DAY_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  weekday: 'short',
+  timeZone: LOS_ANGELES_TIME_ZONE
+});
+
+const EXPECTED_TABLE_NAMES = [
+  'FactTimeslices',
+  'DimWorkflow',
+  'DimStage',
+  'DimDate',
+  'DimPlaybackFrame',
+  'StageOccupancy_Hourly',
+  'StageThroughput_Daily',
+  'ColorPalette'
+] as const;
+
+const COLOR_HEX_VALUES: string[] = [
+  '#01B8AA',
+  '#374649',
+  '#FD625E',
+  '#F2C80F',
+  '#5F6B6D',
+  '#8AD4EB',
+  '#FE9666',
+  '#A66999',
+  '#3599B8',
+  '#DFBFBF',
+  '#4AC5BB',
+  '#5F6B6D',
+  '#FB8281',
+  '#F4D25A',
+  '#7F898A',
+  '#A4DDEE',
+  '#FDAB89',
+  '#B687AC',
+  '#28738A',
+  '#A78F8F',
+  '#168980',
+  '#293537',
+  '#BB4A4A',
+  '#B59525',
+  '#475052',
+  '#6AABBE',
+  '#C6765B',
+  '#7B4F71',
+  '#1D5C73',
+  '#B69999',
+  '#0F5C57',
+  '#1C2426',
+  '#7B3131',
+  '#7A6319',
+  '#2F3638',
+  '#477383'
+];
+
+export function derivePbiTableRows(input: {
+  workflowDefinitions: CanonWorkflowDefinition[];
+  workflowStages: CanonWorkflowStage[];
+  timeslices: CanonTimeslice[];
+}): PbiTableRowsByName {
+  const workflowDefinitionByCanonId = new Map(
+    input.workflowDefinitions.map((workflowDefinition) => [
+      workflowDefinition.workflow_definition_id,
+      workflowDefinition
+    ])
+  );
+  const workflowLabelByKey = new Map<string, string>();
+  for (const workflowDefinition of input.workflowDefinitions) {
+    workflowLabelByKey.set(
+      workflowDefinition.source_page_id,
+      workflowDefinition.page_title ?? workflowDefinition.source_page_id
+    );
+  }
+
+  const stageByCanonId = new Map(input.workflowStages.map((stage) => [stage.workflow_stage_id, stage]));
+  const stageByPageId = new Map(input.workflowStages.map((stage) => [stage.source_page_id, stage]));
+  const stageKeyByCanonId = new Map<string, string>();
+  for (const stage of input.workflowStages) {
+    stageKeyByCanonId.set(stage.workflow_stage_id, stage.source_page_id);
+  }
+
+  const workflowPageIdSet = new Set(input.workflowDefinitions.map((workflowDefinition) => workflowDefinition.source_page_id));
+  const workflowKeys = new Set(workflowPageIdSet);
+  const stagePageIdSet = new Set(input.workflowStages.map((stage) => stage.source_page_id));
+  const factRows: FactTimesliceRow[] = [];
+  const stageRowsByKey = new Map<string, DimStageRow>();
+
+  for (const item of input.timeslices) {
+    const workflowDefinitionCanonicalId = item.workflow_definition_id;
+    const workflowDefinition = workflowDefinitionCanonicalId
+      ? workflowDefinitionByCanonId.get(workflowDefinitionCanonicalId)
+      : undefined;
+    const workflowDefinitionKey =
+      workflowDefinition?.source_page_id ??
+      toUuidMaybe(workflowDefinitionCanonicalId) ??
+      'workflow_definition_unknown';
+    const workflowDefinitionLabel =
+      workflowDefinition?.page_title ?? workflowLabelByKey.get(workflowDefinitionKey) ?? workflowDefinitionKey;
+
+    const fromStageKey = resolveStageKey(item.from_step_id, stageKeyByCanonId);
+    const toStageKey = resolveStageKey(item.to_step_id, stageKeyByCanonId);
+    const fromStageMeta = fromStageKey ? stageByPageId.get(fromStageKey) : undefined;
+    const toStageMeta = toStageKey ? stageByPageId.get(toStageKey) : undefined;
+    const fromStageNumber = normalizeStageNumberOrNull(fromStageMeta?.stage_number);
+    const toStageNumber = normalizeStageNumberOrNull(toStageMeta?.stage_number);
+    const fromStageLabel = fromStageMeta?.stage_label ?? null;
+    const toStageLabel = toStageMeta?.stage_label ?? null;
+    const toDateTimeRaw = item.ended_at ?? item.started_at ?? item.last_edited_time ?? item.created_time;
+    const toDateTime = normalizeIsoTimestamp(toDateTimeRaw);
+    const toDate = toLosAngelesDateStartIso(toDateTimeRaw);
+
+    factRows.push({
+      Name: item.page_title ?? item.timeslice_id,
+      'From Event': null,
+      'From Status': null,
+      'From Step N': fromStageNumber,
+      'From Task Name': null,
+      'From Task Page ID': null,
+      'From Time': toPowerBiSerial(item.started_at),
+      'From Workflow Step': fromStageLabel,
+      'Minutes Diff':
+        typeof item.duration_seconds === 'number' ? Math.round(item.duration_seconds / 60) : null,
+      'Slice Label': item.page_title ?? item.timeslice_id,
+      'To Event': null,
+      'To Status': null,
+      'To Step N': toStageNumber,
+      'To Task Name': null,
+      'To Task Page ID': null,
+      'To Time': toPowerBiSerial(item.ended_at),
+      'To Workflow Step': toStageLabel,
+      'Workflow Definition': workflowDefinitionLabel,
+      'Workflow Record': item.source_page_id,
+      'Workflow Type': null,
+      'To DateTime': toDateTime,
+      'To Date': toDate,
+      from_stage_key: fromStageKey,
+      to_stage_key: toStageKey
+    });
+  }
+
+  for (const workflowStage of input.workflowStages) {
+    const stageKey = workflowStage.source_page_id;
+    const workflowDefinition = workflowStage.workflow_definition_id
+      ? workflowDefinitionByCanonId.get(workflowStage.workflow_definition_id)
+      : undefined;
+    const workflowDefinitionKey =
+      workflowDefinition?.source_page_id ??
+      toUuidMaybe(workflowStage.workflow_definition_id) ??
+      'workflow_definition_unknown';
+    const workflowDefinitionLabel =
+      workflowDefinition?.page_title ?? workflowLabelByKey.get(workflowDefinitionKey) ?? workflowDefinitionKey;
+
+    stageRowsByKey.set(stageKey, {
+      stage_key: stageKey,
+      workflow_definition_key: workflowDefinitionKey,
+      workflow_definition: workflowDefinitionLabel,
+      stage: workflowStage.stage_label ?? stageKey,
+      stage_n: normalizeStageNumber(workflowStage.stage_number),
+      'Stage Label': `${pad2(normalizeStageNumber(workflowStage.stage_number))}. ${
+        workflowStage.stage_label ?? stageKey
+      }`
+    });
+  }
+
+  const dimWorkflowRows: DimWorkflowRow[] = Array.from(workflowKeys)
+    .sort((a, b) => a.localeCompare(b))
+    .map((workflow_definition_key) => ({
+      workflow_definition_key,
+      workflow_definition: workflowLabelByKey.get(workflow_definition_key) ?? workflow_definition_key
+    }));
+
+  const dimStageRows: DimStageRow[] = Array.from(stageRowsByKey.values()).sort((a, b) =>
+    a.stage_key.localeCompare(b.stage_key)
+  );
+
+  const missingFactStageKeys = factRows
+    .flatMap((row) => [row.from_stage_key, row.to_stage_key])
+    .filter((key): key is string => typeof key === 'string' && key.length > 0)
+    .filter((key) => !stagePageIdSet.has(key));
+  if (missingFactStageKeys.length > 0) {
+    throw new Error(
+      `FactTimeslices references stage keys not present in workflowStages: ${Array.from(
+        new Set(missingFactStageKeys)
+      )
+        .slice(0, 10)
+        .join(', ')}`
+    );
+  }
+
+  const illegalWorkflowKeys = dimWorkflowRows
+    .filter((row) => !workflowPageIdSet.has(row.workflow_definition_key))
+    .map((row) => row.workflow_definition_key);
+  if (illegalWorkflowKeys.length > 0) {
+    throw new Error(
+      `DimWorkflow contains keys not present in workflowDefinitions: ${illegalWorkflowKeys.slice(0, 10).join(', ')}`
+    );
+  }
+
+  const illegalStageKeys = dimStageRows
+    .filter((row) => !stagePageIdSet.has(row.stage_key))
+    .map((row) => row.stage_key);
+  if (illegalStageKeys.length > 0) {
+    throw new Error(
+      `DimStage contains keys not present in workflowStages: ${illegalStageKeys.slice(0, 10).join(', ')}`
+    );
+  }
+
+  const dimDateRows = deriveDimDateRows(factRows);
+  const dimPlaybackFrameRows = deriveDimPlaybackFrameRows(input.timeslices);
+  const colorPaletteRows: ColorPaletteRow[] = COLOR_HEX_VALUES.map((hex, index) => ({
+    color_n: index + 1,
+    hex
+  }));
+
+  const tableRowsByName: PbiTableRowsByName = {
+    FactTimeslices: factRows,
+    DimWorkflow: dimWorkflowRows,
+    DimStage: dimStageRows,
+    DimDate: dimDateRows,
+    DimPlaybackFrame: dimPlaybackFrameRows,
+    StageOccupancy_Hourly: [],
+    StageThroughput_Daily: [],
+    ColorPalette: colorPaletteRows
+  };
+  assertExpectedTableKeys(tableRowsByName);
+  return tableRowsByName;
+}
+
+function resolveStageKey(
+  canonicalStageId: string | null,
+  stageKeyByCanonId: Map<string, string>
+): string | null {
+  if (!canonicalStageId) {
+    return null;
+  }
+  return stageKeyByCanonId.get(canonicalStageId) ?? null;
+}
+
+function toPowerBiSerial(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+  const asMs = Date.parse(value);
+  if (!Number.isFinite(asMs)) {
+    return null;
+  }
+  return (asMs - OLE_AUTOMATION_EPOCH_MS) / (24 * 60 * 60 * 1000);
+}
+
+function normalizeIsoTimestamp(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const asMs = Date.parse(value);
+  if (!Number.isFinite(asMs)) {
+    return null;
+  }
+  return new Date(asMs).toISOString();
+}
+
+function normalizeStageNumber(value: number | null | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.round(value);
+}
+
+function normalizeStageNumberOrNull(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return Math.round(value);
+}
+
+function toUuidMaybe(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const lower = value.toLowerCase();
+  const hyphenatedMatch = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/.exec(lower);
+  if (hyphenatedMatch) {
+    return hyphenatedMatch[1];
+  }
+
+  const compactMatch = /([0-9a-f]{32})/.exec(lower);
+  if (!compactMatch) {
+    return null;
+  }
+  const compact = compactMatch[1];
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(
+    16,
+    20
+  )}-${compact.slice(20)}`;
+}
+
+function toLosAngelesDateStartIso(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const asMs = Date.parse(value);
+  if (!Number.isFinite(asMs)) {
+    return null;
+  }
+  const parts = getLosAngelesDateParts(new Date(asMs));
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T00:00:00.000Z`;
+}
+
+function deriveDimDateRows(factRows: FactTimesliceRow[]): DimDateRow[] {
+  const dateValues = factRows
+    .map((row) => row['To Date'])
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .sort((a, b) => a.localeCompare(b));
+
+  if (dateValues.length === 0) {
+    return [];
+  }
+
+  const minDateParts = parseDateLabel(dateValues[0]);
+  const maxDateParts = parseDateLabel(dateValues[dateValues.length - 1]);
+  if (!minDateParts || !maxDateParts) {
+    return [];
+  }
+
+  const rows: DimDateRow[] = [];
+  const minDateUtcMs = Date.UTC(minDateParts.year, minDateParts.month - 1, minDateParts.day, 0, 0, 0, 0);
+  const maxDateUtcMs = Date.UTC(maxDateParts.year, maxDateParts.month - 1, maxDateParts.day, 0, 0, 0, 0);
+  for (let ts = minDateUtcMs; ts <= maxDateUtcMs; ts += DAY_MS) {
+    const date = new Date(ts);
+    const yyyy = date.getUTCFullYear();
+    const mm = date.getUTCMonth() + 1;
+    const dd = date.getUTCDate();
+    const labelRef = new Date(Date.UTC(yyyy, mm - 1, dd, 12, 0, 0, 0));
+    rows.push({
+      Date: date.toISOString(),
+      date_key: yyyy * 10000 + mm * 100 + dd,
+      year: yyyy,
+      month_num: mm,
+      month_name: MONTH_FORMATTER.format(labelRef),
+      day_of_month: dd,
+      day_name: DAY_FORMATTER.format(labelRef)
+    });
+  }
+  return rows;
+}
+
+function deriveDimPlaybackFrameRows(timeslices: CanonTimeslice[]): DimPlaybackFrameRow[] {
+  const timestamps: number[] = [];
+  for (const item of timeslices) {
+    const candidates = [item.started_at, item.ended_at, item.last_edited_time, item.created_time];
+    for (const candidate of candidates) {
+      const asMs = candidate ? Date.parse(candidate) : Number.NaN;
+      if (Number.isFinite(asMs)) {
+        timestamps.push(asMs);
+      }
+    }
+  }
+
+  if (timestamps.length === 0) {
+    return [];
+  }
+
+  const minTs = Math.min(...timestamps);
+  const maxTs = Math.max(...timestamps);
+  const minHourTs = Math.floor(minTs / HOUR_MS) * HOUR_MS;
+  const maxHourTs = Math.floor(maxTs / HOUR_MS) * HOUR_MS;
+
+  const rows: DimPlaybackFrameRow[] = [];
+  let frameN = 0;
+  for (let ts = minHourTs; ts <= maxHourTs; ts += HOUR_MS) {
+    const frameDatetime = new Date(ts);
+    const frameDate = toLosAngelesDateStartIso(frameDatetime.toISOString());
+    rows.push({
+      frame_n: frameN,
+      frame_datetime: frameDatetime.toISOString(),
+      frame_date: frameDate ?? frameDatetime.toISOString()
+    });
+    frameN += 1;
+  }
+  return rows;
+}
+
+function getLosAngelesDateParts(date: Date): { year: number; month: number; day: number } {
+  const parts = DATE_PARTS_FORMATTER.formatToParts(date);
+  const yearPart = parts.find((part) => part.type === 'year')?.value;
+  const monthPart = parts.find((part) => part.type === 'month')?.value;
+  const dayPart = parts.find((part) => part.type === 'day')?.value;
+  const year = yearPart ? Number.parseInt(yearPart, 10) : Number.NaN;
+  const month = monthPart ? Number.parseInt(monthPart, 10) : Number.NaN;
+  const day = dayPart ? Number.parseInt(dayPart, 10) : Number.NaN;
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    throw new Error(`Failed to resolve Los Angeles date parts for timestamp: ${date.toISOString()}`);
+  }
+  return { year, month, day };
+}
+
+function parseDateLabel(value: string): { year: number; month: number; day: number } | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T00:00:00\.000Z$/.exec(value);
+  if (!match) {
+    return null;
+  }
+  return {
+    year: Number.parseInt(match[1], 10),
+    month: Number.parseInt(match[2], 10),
+    day: Number.parseInt(match[3], 10)
+  };
+}
+
+function assertExpectedTableKeys(tableRowsByName: PbiTableRowsByName): void {
+  const actual = Object.keys(tableRowsByName);
+  const missing = EXPECTED_TABLE_NAMES.filter((name) => !Object.prototype.hasOwnProperty.call(tableRowsByName, name));
+  const extra = actual.filter((name) => !EXPECTED_TABLE_NAMES.includes(name as (typeof EXPECTED_TABLE_NAMES)[number]));
+  if (missing.length === 0 && extra.length === 0) {
+    return;
+  }
+  throw new Error(
+    `derivePbiTableRows returned unexpected table keys. Missing: ${missing.join(', ') || 'none'}. Extra: ${
+      extra.join(', ') || 'none'
+    }.`
+  );
+}
+
+function pad2(value: number): string {
+  return value.toString().padStart(2, '0');
+}

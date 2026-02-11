@@ -3,4 +3,4 @@ dist/
 .env
 data/
 *.log
-project-reporter
+project-reporter/

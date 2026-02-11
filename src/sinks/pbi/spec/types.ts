@@ -12,6 +12,7 @@ export interface PbiTableSpec {
 }
 
 export interface PbiRelationshipSpec {
+  name: string;
   fromTable: string;
   fromColumn: string;
   toTable: string;

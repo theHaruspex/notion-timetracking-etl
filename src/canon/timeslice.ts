@@ -27,11 +27,37 @@ function extractDateStart(rawValue: unknown): string | null {
     return null;
   }
 
-  const typed = rawValue as { type?: string; date?: { start?: string | null } | null };
-  if (typed.type !== 'date') {
-    return null;
+  const typed = rawValue as {
+    type?: string;
+    date?: { start?: string | null } | null;
+    rollup?: {
+      type?: string;
+      date?: { start?: string | null } | null;
+      array?: Array<{ type?: string; date?: { start?: string | null } | null }>;
+    } | null;
+  };
+
+  if (typed.type === 'date') {
+    return typeof typed.date?.start === 'string' ? typed.date.start : null;
   }
-  return typed.date?.start ?? null;
+
+  if (typed.type === 'rollup' && typed.rollup && typeof typed.rollup === 'object') {
+    if (typed.rollup.type === 'date') {
+      return typeof typed.rollup.date?.start === 'string' ? typed.rollup.date.start : null;
+    }
+
+    if (typed.rollup.type === 'array' && Array.isArray(typed.rollup.array)) {
+      const firstDateItem = typed.rollup.array.find(
+        (item) => item && typeof item === 'object' && item.type === 'date'
+      );
+      if (!firstDateItem) {
+        return null;
+      }
+      return typeof firstDateItem.date?.start === 'string' ? firstDateItem.date.start : null;
+    }
+  }
+
+  return null;
 }
 
 function extractFirstRelationId(rawValue: unknown): string | null {
@@ -139,4 +165,42 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
     page_title: pageTitle,
     attributes: rawProperties
   });
+}
+
+export function debugAssertExtractDateStart(): void {
+  const nativeDate = {
+    type: 'date',
+    date: { start: '2026-01-15T23:36:00.000Z', end: null, time_zone: null }
+  };
+  if (extractDateStart(nativeDate) !== '2026-01-15T23:36:00.000Z') {
+    throw new Error('extractDateStart failed for native date payload.');
+  }
+
+  const rollupArrayDate = {
+    type: 'rollup',
+    rollup: {
+      type: 'array',
+      array: [
+        {
+          type: 'date',
+          date: { start: '2026-01-15T23:36:00.000+00:00', end: null, time_zone: null }
+        }
+      ],
+      function: 'show_original'
+    }
+  };
+  if (extractDateStart(rollupArrayDate) !== '2026-01-15T23:36:00.000+00:00') {
+    throw new Error('extractDateStart failed for rollup array date payload.');
+  }
+
+  const rollupSingleDate = {
+    type: 'rollup',
+    rollup: {
+      type: 'date',
+      date: { start: '2026-01-16T00:00:00.000Z', end: null, time_zone: null }
+    }
+  };
+  if (extractDateStart(rollupSingleDate) !== '2026-01-16T00:00:00.000Z') {
+    throw new Error('extractDateStart failed for rollup date payload.');
+  }
 }

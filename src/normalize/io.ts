@@ -16,13 +16,21 @@ export async function readRawDatasetForDate(
   dataset: string,
   dateDir: string
 ): Promise<RawRecord[]> {
-  const targetDir = path.join(baseRawDir, dataset, dateDir);
+  return readDatasetJsonlForDate<RawRecord>(baseRawDir, dataset, dateDir);
+}
+
+export async function readDatasetJsonlForDate<T>(
+  baseDir: string,
+  dataset: string,
+  dateDir: string
+): Promise<T[]> {
+  const targetDir = path.join(baseDir, dataset, dateDir);
   const files = await listFiles(targetDir);
   const jsonlFiles = files.filter((file) => file.endsWith('.jsonl'));
 
-  const all: RawRecord[] = [];
+  const all: T[] = [];
   for (const file of jsonlFiles) {
-    const records = await readJsonl<RawRecord>(path.join(targetDir, file));
+    const records = await readJsonl<T>(path.join(targetDir, file));
     all.push(...records);
   }
 

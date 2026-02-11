@@ -12,7 +12,7 @@ import { writeJsonlSink } from '../sinks/jsonlSink.js';
 import { log } from '../lib/log.js';
 import { NotionAdapter } from '../ingress/notionAdapter.js';
 import { pullDatasetFromNotion } from '../ingress/pullNotion.js';
-import { latestDatasetDateDir, readRawDatasetForDate } from '../normalize/io.js';
+import { latestDatasetDateDir, readDatasetJsonlForDate, readRawDatasetForDate } from '../normalize/io.js';
 import { normalizeDatasets } from '../normalize/normalizeDatasets.js';
 import { ensureDir } from '../lib/fs.js';
 import {
@@ -21,8 +21,13 @@ import {
   buildModelSpec,
   validateSpec,
   ensureDataset,
-  getDatasetRegistryPath
+  getDatasetRegistryPath,
+  executeWipeAndReload
 } from '../sinks/pbi/index.js';
+import { derivePbiTableRows } from '../sinks/pbi/refresh/derive/index.js';
+import type { Timeslice } from '../canon/timeslice.js';
+import type { WorkflowDefinition } from '../canon/workflowDefinition.js';
+import type { WorkflowStage } from '../canon/workflowStage.js';
 
 const DATASET_NAMES = {
   workflow_definitions: 'workflow_definitions',
@@ -225,6 +230,75 @@ async function runPbiProvision(): Promise<void> {
   });
 }
 
+async function runPbiRefresh(): Promise<void> {
+  const appConfig = loadConfig();
+  const pbiConfig = loadPbiConfig();
+
+  const spec = buildModelSpec(pbiConfig.datasetName);
+  validateSpec(spec);
+
+  const auth = new PowerBiServicePrincipalAuth({
+    tenantId: pbiConfig.tenantId,
+    clientId: pbiConfig.clientId,
+    clientSecret: pbiConfig.clientSecret
+  });
+  const client = new PowerBiClient({ auth });
+
+  const datasetId = await ensureDataset(
+    client,
+    { resolvedDataDir: appConfig.resolvedDataDir },
+    {
+      workspaceId: pbiConfig.workspaceId,
+      datasetName: pbiConfig.datasetName,
+      spec
+    }
+  );
+
+  const canonBase = path.join(appConfig.resolvedDataDir, 'canon');
+  const wfDefDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.workflow_definitions);
+  const wfStageDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.workflow_stages);
+  const timesliceDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.timeslices);
+  if (!wfDefDate || !wfStageDate || !timesliceDate) {
+    throw new Error('Missing canonical datasets. Run normalize before pbi:refresh.');
+  }
+
+  const workflowDefinitions = await readDatasetJsonlForDate<WorkflowDefinition>(
+    canonBase,
+    DATASET_NAMES.workflow_definitions,
+    wfDefDate
+  );
+  const workflowStages = await readDatasetJsonlForDate<WorkflowStage>(
+    canonBase,
+    DATASET_NAMES.workflow_stages,
+    wfStageDate
+  );
+  const timeslices = await readDatasetJsonlForDate<Timeslice>(
+    canonBase,
+    DATASET_NAMES.timeslices,
+    timesliceDate
+  );
+  const tableRowsByName = derivePbiTableRows({
+    workflowDefinitions,
+    workflowStages,
+    timeslices
+  });
+
+  const result = await executeWipeAndReload(client, {
+    workspaceId: pbiConfig.workspaceId,
+    datasetId,
+    spec,
+    tableRowsByName,
+    log: log.info
+  });
+
+  log.info('pbi refresh complete', {
+    workspaceId: pbiConfig.workspaceId,
+    datasetName: pbiConfig.datasetName,
+    datasetId,
+    ...result
+  });
+}
+
 const program = new Command();
 program.name('etl-cli').description('Pull + normalize integration data').version('0.1.0');
 
@@ -237,6 +311,10 @@ program
   .command('pbi:provision')
   .description('Provision Power BI dataset scaffold and persist dataset registry mapping')
   .action(runPbiProvision);
+program
+  .command('pbi:refresh')
+  .description('Strict wipe+reload Power BI tables from canonical datasets')
+  .action(runPbiRefresh);
 program.command('normalize').description('Normalize latest raw records').action(runNormalize);
 program.command('run').description('Run pull:notion then normalize').action(runAll);
 
