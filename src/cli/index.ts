@@ -20,10 +20,11 @@ import {
   PowerBiServicePrincipalAuth,
   buildModelSpec,
   validateSpec,
-  ensureDataset,
+  applySchema,
   getDatasetRegistryPath,
   executeWipeAndReload
 } from '../sinks/pbi/index.js';
+import { findDatasetId, findMostRecentEntryForGroup, loadRegistry } from '../sinks/pbi/state/datasetRegistry.js';
 import { derivePbiTableRows } from '../sinks/pbi/refresh/derive/index.js';
 import type { Timeslice } from '../canon/timeslice.js';
 import type { WorkflowDefinition } from '../canon/workflowDefinition.js';
@@ -210,6 +211,11 @@ async function runAll(): Promise<void> {
 async function runPbiProvision(): Promise<void> {
   const appConfig = loadConfig();
   const pbiConfig = loadPbiConfig();
+  if (!pbiConfig.datasetName) {
+    throw new Error(
+      'PBI_DATASET_NAME is required for pbi:provision so we can create or target a named dataset.'
+    );
+  }
 
   const spec = buildModelSpec(pbiConfig.datasetName);
   validateSpec(spec);
@@ -221,20 +227,21 @@ async function runPbiProvision(): Promise<void> {
   });
   const client = new PowerBiClient({ auth });
 
-  const datasetId = await ensureDataset(
+  const { datasetId, changesApplied } = await applySchema(
     client,
     { resolvedDataDir: appConfig.resolvedDataDir },
     {
-      workspaceId: pbiConfig.workspaceId,
+      groupId: pbiConfig.groupId,
       datasetName: pbiConfig.datasetName,
       spec
     }
   );
 
   log.info('pbi provision complete', {
-    workspaceId: pbiConfig.workspaceId,
+    groupId: pbiConfig.groupId,
     datasetName: pbiConfig.datasetName,
     datasetId,
+    changesApplied,
     registryPath: getDatasetRegistryPath({ resolvedDataDir: appConfig.resolvedDataDir })
   });
 }
@@ -243,9 +250,6 @@ async function runPbiRefresh(): Promise<void> {
   const appConfig = loadConfig();
   const pbiConfig = loadPbiConfig();
 
-  const spec = buildModelSpec(pbiConfig.datasetName);
-  validateSpec(spec);
-
   const auth = new PowerBiServicePrincipalAuth({
     tenantId: pbiConfig.tenantId,
     clientId: pbiConfig.clientId,
@@ -253,15 +257,35 @@ async function runPbiRefresh(): Promise<void> {
   });
   const client = new PowerBiClient({ auth });
 
-  const datasetId = await ensureDataset(
-    client,
-    { resolvedDataDir: appConfig.resolvedDataDir },
-    {
-      workspaceId: pbiConfig.workspaceId,
-      datasetName: pbiConfig.datasetName,
-      spec
-    }
-  );
+  const registry = await loadRegistry({ resolvedDataDir: appConfig.resolvedDataDir });
+  const requestedDatasetName = pbiConfig.datasetName;
+  const selectedEntry =
+    requestedDatasetName
+      ? registry.entries.find(
+          (entry) =>
+            entry.groupId === pbiConfig.groupId &&
+            entry.datasetName.toLowerCase() === requestedDatasetName.toLowerCase()
+        ) ?? null
+      : findMostRecentEntryForGroup(registry, { groupId: pbiConfig.groupId });
+  if (!selectedEntry) {
+    throw new Error(
+      requestedDatasetName
+        ? `No dataset registry entry found for group "${pbiConfig.groupId}" and dataset "${requestedDatasetName}". Run: npm run cli -- pbi:provision`
+        : `No dataset registry entry found for group "${pbiConfig.groupId}". Run: npm run cli -- pbi:provision`
+    );
+  }
+  const datasetId = selectedEntry.datasetId;
+  const datasetName = selectedEntry.datasetName;
+
+  const spec = buildModelSpec(datasetName);
+  validateSpec(spec);
+
+  const datasets = await client.getDatasetsInGroup(pbiConfig.groupId);
+  if (!datasets.some((dataset) => dataset.id === datasetId)) {
+    throw new Error(
+      `Dataset ID "${datasetId}" from registry was not found in group "${pbiConfig.groupId}". This command does not auto-recreate datasets. Run: npm run cli -- pbi:provision`
+    );
+  }
 
   const canonBase = path.join(appConfig.resolvedDataDir, 'canon');
   const wfDefDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.workflow_definitions);
@@ -291,9 +315,20 @@ async function runPbiRefresh(): Promise<void> {
     workflowStages,
     timeslices
   });
+  const tableRowCounts = Object.fromEntries(
+    spec.tables.map((table) => [table.name, tableRowsByName[table.name]?.length ?? 0])
+  );
+  log.info('pbi refresh table row counts', {
+    selectedDatasetName: datasetName,
+    selectedDatasetId: datasetId,
+    workflowDefinitionsDate: wfDefDate,
+    workflowStagesDate: wfStageDate,
+    timeslicesDate: timesliceDate,
+    tableRowCounts
+  });
 
   const result = await executeWipeAndReload(client, {
-    workspaceId: pbiConfig.workspaceId,
+    groupId: pbiConfig.groupId,
     datasetId,
     spec,
     tableRowsByName,
@@ -301,8 +336,8 @@ async function runPbiRefresh(): Promise<void> {
   });
 
   log.info('pbi refresh complete', {
-    workspaceId: pbiConfig.workspaceId,
-    datasetName: pbiConfig.datasetName,
+    groupId: pbiConfig.groupId,
+    datasetName,
     datasetId,
     ...result
   });

@@ -9,7 +9,7 @@ import {
 } from '../state/datasetRegistry.js';
 
 export interface EnsureDatasetInput {
-  workspaceId: string;
+  groupId: string;
   datasetName: string;
   spec: PbiDatasetSpec;
 }
@@ -21,7 +21,7 @@ export async function ensureDataset(
 ): Promise<string> {
   const registry = await loadRegistry(registryConfig);
   const knownId = findDatasetId(registry, {
-    workspaceId: input.workspaceId,
+    groupId: input.groupId,
     datasetName: input.datasetName
   });
 
@@ -29,14 +29,14 @@ export async function ensureDataset(
     return knownId;
   }
 
-  const datasets = await client.getDatasetsInGroup(input.workspaceId);
+  const datasets = await client.getDatasetsInGroup(input.groupId);
   const existing = datasets.find(
     (dataset) => dataset.name.toLowerCase() === input.datasetName.toLowerCase()
   );
 
   if (existing) {
     upsertEntry(registry, {
-      workspaceId: input.workspaceId,
+      groupId: input.groupId,
       datasetName: input.datasetName,
       datasetId: existing.id
     });
@@ -44,9 +44,9 @@ export async function ensureDataset(
     return existing.id;
   }
 
-  const created = await client.createDatasetInGroup(input.workspaceId, input.spec);
+  const created = await client.createDatasetInGroup(input.groupId, input.spec);
   upsertEntry(registry, {
-    workspaceId: input.workspaceId,
+    groupId: input.groupId,
     datasetName: input.datasetName,
     datasetId: created.id
   });

@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { ensureDir } from '../../../lib/fs.js';
 
 export interface DatasetRegistryEntry {
-  workspaceId: string;
+  groupId: string;
   datasetName: string;
   datasetId: string;
   createdAt: string;
@@ -28,10 +28,31 @@ export async function loadRegistry(config: DatasetRegistryConfig): Promise<Datas
 
   try {
     const raw = await readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw) as DatasetRegistryFile;
-    return {
-      entries: Array.isArray(parsed.entries) ? parsed.entries : []
-    };
+    const parsed = JSON.parse(raw) as { entries?: Array<Record<string, unknown>> };
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    const normalizedEntries: DatasetRegistryEntry[] = [];
+    for (const entry of entries) {
+      const groupIdRaw = entry.groupId ?? entry.workspaceId;
+      const datasetNameRaw = entry.datasetName;
+      const datasetIdRaw = entry.datasetId;
+      if (
+        typeof groupIdRaw !== 'string' ||
+        typeof datasetNameRaw !== 'string' ||
+        typeof datasetIdRaw !== 'string'
+      ) {
+        continue;
+      }
+      normalizedEntries.push({
+        groupId: groupIdRaw,
+        datasetName: datasetNameRaw,
+        datasetId: datasetIdRaw,
+        createdAt: typeof entry.createdAt === 'string' ? entry.createdAt : new Date().toISOString(),
+        updatedAt: typeof entry.updatedAt === 'string' ? entry.updatedAt : new Date().toISOString(),
+        lastAppliedSchemaHash:
+          typeof entry.lastAppliedSchemaHash === 'string' ? entry.lastAppliedSchemaHash : undefined
+      });
+    }
+    return { entries: normalizedEntries };
   } catch {
     return { entries: [] };
   }
@@ -48,20 +69,54 @@ export async function saveRegistry(
 
 export function findDatasetId(
   registry: DatasetRegistryFile,
-  input: { workspaceId: string; datasetName: string }
+  input: { groupId: string; datasetName: string }
 ): string | null {
   const match = registry.entries.find(
     (entry) =>
-      entry.workspaceId === input.workspaceId &&
+      entry.groupId === input.groupId &&
       entry.datasetName.toLowerCase() === input.datasetName.toLowerCase()
   );
   return match?.datasetId ?? null;
 }
 
+export function findMostRecentEntryForGroup(
+  registry: DatasetRegistryFile,
+  input: { groupId: string }
+): DatasetRegistryEntry | null {
+  const candidates = registry.entries.filter((entry) => entry.groupId === input.groupId);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const toTimestamp = (value: string | undefined): number => {
+    if (!value) {
+      return 0;
+    }
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const sorted = [...candidates].sort((a, b) => {
+    const aUpdated = toTimestamp(a.updatedAt);
+    const bUpdated = toTimestamp(b.updatedAt);
+    if (bUpdated !== aUpdated) {
+      return bUpdated - aUpdated;
+    }
+    const aCreated = toTimestamp(a.createdAt);
+    const bCreated = toTimestamp(b.createdAt);
+    if (bCreated !== aCreated) {
+      return bCreated - aCreated;
+    }
+    return b.datasetName.localeCompare(a.datasetName);
+  });
+
+  return sorted[0] ?? null;
+}
+
 export function upsertEntry(
   registry: DatasetRegistryFile,
   input: {
-    workspaceId: string;
+    groupId: string;
     datasetName: string;
     datasetId: string;
     lastAppliedSchemaHash?: string;
@@ -70,13 +125,13 @@ export function upsertEntry(
   const now = new Date().toISOString();
   const index = registry.entries.findIndex(
     (entry) =>
-      entry.workspaceId === input.workspaceId &&
+      entry.groupId === input.groupId &&
       entry.datasetName.toLowerCase() === input.datasetName.toLowerCase()
   );
 
   if (index === -1) {
     registry.entries.push({
-      workspaceId: input.workspaceId,
+      groupId: input.groupId,
       datasetName: input.datasetName,
       datasetId: input.datasetId,
       createdAt: now,

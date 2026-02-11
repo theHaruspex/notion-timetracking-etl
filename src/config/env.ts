@@ -12,7 +12,7 @@ const pbiEnvSchema = z.object({
   PBI_TENANT_ID: z.string().optional(),
   PBI_CLIENT_ID: z.string().optional(),
   PBI_CLIENT_SECRET: z.string().optional(),
-  PBI_WORKSPACE_ID: z.string().optional(),
+  PBI_GROUP_ID: z.string().optional(),
   PBI_DATASET_NAME: z.string().optional()
 });
 
@@ -39,8 +39,8 @@ export type PbiConfig = {
   tenantId: string;
   clientId: string;
   clientSecret: string;
-  workspaceId: string;
-  datasetName: string;
+  groupId: string;
+  datasetName: string | null;
 };
 
 export function loadPbiConfig(): PbiConfig {
@@ -50,7 +50,7 @@ export function loadPbiConfig(): PbiConfig {
   const tenantId = parsed.PBI_TENANT_ID?.trim() ?? '';
   const clientId = parsed.PBI_CLIENT_ID?.trim() ?? '';
   const clientSecret = parsed.PBI_CLIENT_SECRET?.trim() ?? '';
-  const workspaceId = parsed.PBI_WORKSPACE_ID?.trim() ?? '';
+  const groupId = parsed.PBI_GROUP_ID?.trim() ?? '';
   const datasetName = parsed.PBI_DATASET_NAME?.trim() ?? '';
 
   if (!tenantId) {
@@ -62,13 +62,9 @@ export function loadPbiConfig(): PbiConfig {
   if (!clientSecret) {
     missing.push('PBI_CLIENT_SECRET');
   }
-  if (!workspaceId) {
-    missing.push('PBI_WORKSPACE_ID');
+  if (!groupId) {
+    missing.push('PBI_GROUP_ID');
   }
-  if (!datasetName) {
-    missing.push('PBI_DATASET_NAME');
-  }
-
   if (missing.length > 0) {
     throw new Error(
       `Missing required Power BI environment variables: ${missing.join(
@@ -81,8 +77,8 @@ export function loadPbiConfig(): PbiConfig {
     tenantId,
     clientId,
     clientSecret,
-    workspaceId,
-    datasetName
+    groupId,
+    datasetName: datasetName.length > 0 ? datasetName : null
   };
 }
 

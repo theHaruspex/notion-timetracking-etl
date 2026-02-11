@@ -9,7 +9,7 @@ import {
 } from './limits.js';
 
 export interface ExecuteWipeAndReloadInput {
-  workspaceId: string;
+  groupId: string;
   datasetId: string;
   spec: PbiDatasetSpec;
   tableRowsByName: Record<string, object[]>;
@@ -29,18 +29,22 @@ export async function executeWipeAndReload(
   totalRowsPosted: number;
   totalPostRequests: number;
 }> {
-  const specTableNames = new Set(input.spec.tables.map((table) => table.name));
-  for (const tableName of Object.keys(input.tableRowsByName)) {
-    if (!specTableNames.has(tableName)) {
-      throw new Error(
-        `executeWipeAndReload input contains unknown table "${tableName}". Ensure it exists in the dataset spec.`
-      );
-    }
+  const specTableNames = input.spec.tables.map((table) => table.name);
+  const inputTableNames = Object.keys(input.tableRowsByName);
+  const specTableNameSet = new Set(specTableNames);
+  const missingTables = specTableNames.filter(
+    (tableName) => !Object.prototype.hasOwnProperty.call(input.tableRowsByName, tableName)
+  );
+  const extraTables = inputTableNames.filter((tableName) => !specTableNameSet.has(tableName));
+  if (missingTables.length > 0 || extraTables.length > 0) {
+    throw new Error(
+      `executeWipeAndReload table set mismatch. Missing: ${
+        missingTables.join(', ') || 'none'
+      }. Extra: ${extraTables.join(', ') || 'none'}.`
+    );
   }
 
-  const tableOrder = input.spec.tables
-    .map((table) => table.name)
-    .filter((tableName) => Object.prototype.hasOwnProperty.call(input.tableRowsByName, tableName));
+  const tableOrder = specTableNames;
 
   const governor = new RefreshGovernor({
     maxRowsPerHour: input.limits?.maxRowsPerHour ?? DEFAULT_MAX_ROWS_PER_HOUR,
@@ -64,7 +68,7 @@ export async function executeWipeAndReload(
 
   for (const tableName of tableOrder) {
     logger(`wiping table ${tableName}`);
-    await client.deleteRowsInGroup(input.workspaceId, input.datasetId, tableName);
+    await client.deleteRowsInGroup(input.groupId, input.datasetId, tableName);
 
     const rows = input.tableRowsByName[tableName] ?? [];
     const batches = batchRows(rows, 10_000);
@@ -72,7 +76,7 @@ export async function executeWipeAndReload(
     for (let index = 0; index < batches.length; index += 1) {
       const batch = batches[index];
       await governor.waitForBudget({ rows: batch.length, postRequests: 1 });
-      await client.postRowsInGroup(input.workspaceId, input.datasetId, tableName, batch);
+      await client.postRowsInGroup(input.groupId, input.datasetId, tableName, batch);
       governor.record({ rows: batch.length, postRequests: 1 });
 
       totalRowsPosted += batch.length;

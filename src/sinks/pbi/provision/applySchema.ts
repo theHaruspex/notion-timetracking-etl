@@ -6,7 +6,7 @@ import { schemaDiff } from './schemaDiff.js';
 import type { DatasetRegistryConfig } from '../state/datasetRegistry.js';
 
 export interface ApplySchemaInput {
-  workspaceId: string;
+  groupId: string;
   datasetName: string;
   spec: PbiDatasetSpec;
 }
@@ -19,7 +19,7 @@ export async function applySchema(
   validateSpec(input.spec);
 
   const datasetId = await ensureDataset(client, registryConfig, input);
-  const existingTables = await client.getTablesInGroup(input.workspaceId, datasetId);
+  const existingTables = await client.getTablesInGroup(input.groupId, datasetId);
   const diff = schemaDiff(
     input.spec,
     existingTables.map((table) => ({ name: table.name }))

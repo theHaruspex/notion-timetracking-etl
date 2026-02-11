@@ -6,6 +6,17 @@ const MAX_RELATIONSHIPS = 75;
 const MAX_NAME_LENGTH = 100;
 const CONTROL_CHAR_REGEX = /[\u0000-\u001F\u007F]/;
 const VALID_CROSS_FILTERING = new Set(['OneDirection', 'BothDirections', 'Automatic']);
+const REQUIRED_TABLE_NAMES = [
+  'FactTimeslices',
+  'DimWorkflow',
+  'DimStage',
+  'DimDate',
+  'DimPlaybackFrame',
+  'StageOccupancy_Hourly',
+  'StageThroughput_Daily',
+  'ColorPalette'
+] as const;
+const SUPPORTED_PUSH_COLUMN_TYPES = new Set(['Int64', 'Double', 'Boolean', 'String', 'DateTime']);
 
 function validateName(kind: 'table' | 'column' | 'relationship', name: string, context?: string): string {
   if (name.length === 0) {
@@ -62,7 +73,26 @@ export function validateSpec(spec: PbiDatasetSpec): void {
         throw new Error(`Invalid spec: duplicate column "${columnName}" in table "${tableName}".`);
       }
       columnNameSet.add(columnName.toLowerCase());
+      if (!SUPPORTED_PUSH_COLUMN_TYPES.has(column.dataType)) {
+        throw new Error(
+          `Invalid spec: unsupported Push Dataset column type "${column.dataType}" for "${tableName}.${columnName}".`
+        );
+      }
     }
+  }
+
+  // For this pipeline we enforce exact table names so provision/refresh stay deterministic.
+  const actualTableNames = new Set(spec.tables.map((table) => table.name));
+  const missingRequiredTables = REQUIRED_TABLE_NAMES.filter((tableName) => !actualTableNames.has(tableName));
+  const unexpectedTables = Array.from(actualTableNames).filter(
+    (tableName) => !REQUIRED_TABLE_NAMES.includes(tableName as (typeof REQUIRED_TABLE_NAMES)[number])
+  );
+  if (missingRequiredTables.length > 0 || unexpectedTables.length > 0) {
+    throw new Error(
+      `Invalid spec table set. Missing required tables: ${
+        missingRequiredTables.join(', ') || 'none'
+      }. Unexpected tables: ${unexpectedTables.join(', ') || 'none'}.`
+    );
   }
 
   const relationshipCount = spec.relationships?.length ?? 0;
