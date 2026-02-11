@@ -99,6 +99,8 @@ type NotionConfig = {
       toStageRel: string;
       startedAtDate: string;
       endedAtDate: string;
+      fromEventRel?: string;
+      toEventRel?: string;
     };
     workflowStages: {
       workflowDefinitionRel: string;
@@ -120,10 +122,13 @@ export const notionConfig: NotionConfig = {
   propertyIds: {
     timeslices: {
       workflowDefinitionRel: 'U%3CU%7B',
-      fromStageRel: 'yBeO',
-      toStageRel: '%7Dg%40%5E',
+      // IMPORTANT: stage refs are rollups (array->relation), not direct event relations.
+      fromStageRel: 'Pe%3A%7C',
+      toStageRel: 'KgCD',
       startedAtDate: 'w%5Czt',
-      endedAtDate: 'cZbu'
+      endedAtDate: 'cZbu',
+      fromEventRel: 'yBeO',
+      toEventRel: '%7Dg%40%5E'
     },
     workflowStages: {
       workflowDefinitionRel: '%5Bn%40l',
@@ -158,8 +163,11 @@ export function overrideNotionPropertyIdsForTests(input: {
 export function validateConfiguredPropertyIdsOrThrow(): void {
   const missing: Array<{ dataset: string; key: string }> = [];
 
-  const check = (dataset: string, map: Record<string, string>) => {
+  const check = (dataset: string, map: Record<string, string | undefined>) => {
     for (const [key, value] of Object.entries(map)) {
+      if (typeof value !== 'string') {
+        continue;
+      }
       if (value.trim().length === 0) {
         missing.push({ dataset, key });
       }

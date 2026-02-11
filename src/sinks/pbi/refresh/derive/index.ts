@@ -8,6 +8,8 @@ import type {
   DimStageRow,
   DimWorkflowRow,
   FactTimesliceRow,
+  StageOccupancyHourlyRow,
+  StageThroughputDailyRow,
   PbiTableRowsByName
 } from './types.js';
 
@@ -28,6 +30,15 @@ const MONTH_FORMATTER = new Intl.DateTimeFormat('en-US', {
 });
 const DAY_FORMATTER = new Intl.DateTimeFormat('en-US', {
   weekday: 'short',
+  timeZone: LOS_ANGELES_TIME_ZONE
+});
+const SNAPSHOT_LABEL_FORMATTER = new Intl.DateTimeFormat('sv-SE', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
   timeZone: LOS_ANGELES_TIME_ZONE
 });
 
@@ -86,6 +97,11 @@ export function derivePbiTableRows(input: {
   workflowStages: CanonWorkflowStage[];
   timeslices: CanonTimeslice[];
 }): PbiTableRowsByName {
+  let occupancySkippedMissingOrInvalidInterval = 0;
+  let entryEdgeCounted = 0;
+  let entryEdgeSkippedMissingTimestamp = 0;
+  let nonStage1EntryEdgeObserved = 0;
+
   const workflowDefinitionByCanonId = new Map(
     input.workflowDefinitions.map((workflowDefinition) => [
       workflowDefinition.workflow_definition_id,
@@ -235,6 +251,31 @@ export function derivePbiTableRows(input: {
 
   const dimDateRows = deriveDimDateRows(factRows);
   const dimPlaybackFrameRows = deriveDimPlaybackFrameRows(input.timeslices);
+  const stageOccupancyHourlyRows = deriveStageOccupancyHourlyRows({
+    dimPlaybackFrameRows,
+    dimStageRows,
+    timeslices: input.timeslices,
+    stageKeyByCanonId,
+    onSkippedMissingOrInvalidInterval: () => {
+      occupancySkippedMissingOrInvalidInterval += 1;
+    }
+  });
+  const stageThroughputDailyRows = deriveStageThroughputDailyRows({
+    dimStageRows,
+    stageOccupancyHourlyRows,
+    timeslices: input.timeslices,
+    stageByPageId,
+    stageKeyByCanonId,
+    onEntryEdgeCounted: () => {
+      entryEdgeCounted += 1;
+    },
+    onEntryEdgeSkippedMissingTimestamp: () => {
+      entryEdgeSkippedMissingTimestamp += 1;
+    },
+    onNonStage1EntryEdgeObserved: () => {
+      nonStage1EntryEdgeObserved += 1;
+    }
+  });
   const colorPaletteRows: ColorPaletteRow[] = COLOR_HEX_VALUES.map((hex, index) => ({
     color_n: index + 1,
     hex
@@ -246,11 +287,17 @@ export function derivePbiTableRows(input: {
     DimStage: dimStageRows,
     DimDate: dimDateRows,
     DimPlaybackFrame: dimPlaybackFrameRows,
-    StageOccupancy_Hourly: [],
-    StageThroughput_Daily: [],
+    StageOccupancy_Hourly: stageOccupancyHourlyRows,
+    StageThroughput_Daily: stageThroughputDailyRows,
     ColorPalette: colorPaletteRows
   };
   assertExpectedTableKeys(tableRowsByName);
+  console.warn('[derive] Stage 3 counters', {
+    occupancySkippedMissingOrInvalidInterval,
+    entryEdgeCounted,
+    entryEdgeSkippedMissingTimestamp,
+    nonStage1EntryEdgeObserved
+  });
   return tableRowsByName;
 }
 
@@ -288,9 +335,9 @@ function normalizeIsoTimestamp(value: string | null | undefined): string | null 
 
 function normalizeStageNumber(value: number | null | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    return 0;
+    return 1;
   }
-  return Math.round(value);
+  return Math.max(1, Math.round(value));
 }
 
 function normalizeStageNumberOrNull(value: number | null | undefined): number | null {
@@ -407,6 +454,199 @@ function deriveDimPlaybackFrameRows(timeslices: CanonTimeslice[]): DimPlaybackFr
   return rows;
 }
 
+function deriveStageOccupancyHourlyRows(args: {
+  dimPlaybackFrameRows: DimPlaybackFrameRow[];
+  dimStageRows: DimStageRow[];
+  timeslices: CanonTimeslice[];
+  stageKeyByCanonId: Map<string, string>;
+  onSkippedMissingOrInvalidInterval: () => void;
+}): StageOccupancyHourlyRow[] {
+  type StageInterval = {
+    workflow_record: string;
+    startMs: number;
+    endMs: number;
+  };
+  const intervalsByStageKey = new Map<string, StageInterval[]>();
+  for (const timeslice of args.timeslices) {
+    const stageKey = resolveStageKey(timeslice.from_step_id, args.stageKeyByCanonId);
+    if (!stageKey) {
+      continue;
+    }
+    const startMs = parseTimestampMs(timeslice.started_at);
+    const endMs = parseTimestampMs(timeslice.ended_at);
+    if (startMs === null || endMs === null) {
+      args.onSkippedMissingOrInvalidInterval();
+      continue;
+    }
+    if (endMs < startMs) {
+      args.onSkippedMissingOrInvalidInterval();
+      continue;
+    }
+    const existing = intervalsByStageKey.get(stageKey);
+    const interval: StageInterval = {
+      workflow_record: timeslice.source_page_id,
+      startMs,
+      endMs
+    };
+    if (existing) {
+      existing.push(interval);
+    } else {
+      intervalsByStageKey.set(stageKey, [interval]);
+    }
+  }
+
+  const stageByKey = new Map(args.dimStageRows.map((stage) => [stage.stage_key, stage]));
+  const rows: StageOccupancyHourlyRow[] = [];
+  for (const frame of args.dimPlaybackFrameRows) {
+    const frameMs = parseTimestampMs(frame.frame_datetime);
+    if (frameMs === null) {
+      continue;
+    }
+    for (const [stageKey, intervals] of intervalsByStageKey) {
+      const stage = stageByKey.get(stageKey);
+      if (!stage) {
+        continue;
+      }
+      const activeWorkflowRecords = new Set<string>();
+      for (const interval of intervals) {
+        if (interval.startMs <= frameMs && frameMs <= interval.endMs) {
+          activeWorkflowRecords.add(interval.workflow_record);
+        }
+      }
+      const itemCount = activeWorkflowRecords.size;
+      if (itemCount <= 0) {
+        continue;
+      }
+      rows.push({
+        frame_n: frame.frame_n,
+        snapshot_dt: frame.frame_datetime,
+        snapshot_day: frame.frame_date,
+        snapshot_label: toLosAngelesSnapshotLabel(frame.frame_datetime),
+        workflow_definition: stage.workflow_definition,
+        stage: stage.stage,
+        stage_n: stage.stage_n,
+        stage_key: stage.stage_key,
+        item_count: itemCount,
+        'Objective Count': itemCount
+      });
+    }
+  }
+  return rows;
+}
+
+function deriveStageThroughputDailyRows(args: {
+  dimStageRows: DimStageRow[];
+  stageOccupancyHourlyRows: StageOccupancyHourlyRow[];
+  timeslices: CanonTimeslice[];
+  stageByPageId: Map<string, CanonWorkflowStage>;
+  stageKeyByCanonId: Map<string, string>;
+  onEntryEdgeCounted: () => void;
+  onEntryEdgeSkippedMissingTimestamp: () => void;
+  onNonStage1EntryEdgeObserved: () => void;
+}): StageThroughputDailyRow[] {
+  const stageByKey = new Map(args.dimStageRows.map((stage) => [stage.stage_key, stage]));
+  const dailyCounts = new Map<string, { entry_count: number; exit_count: number }>();
+  const occupancyByDayAndStage = new Map<string, { peak: number; total: number; count: number }>();
+
+  const incrementDailyCount = (
+    stageKey: string,
+    bucketDay: string,
+    field: 'entry_count' | 'exit_count'
+  ): void => {
+    const key = `${bucketDay}|${stageKey}`;
+    const current = dailyCounts.get(key) ?? { entry_count: 0, exit_count: 0 };
+    current[field] += 1;
+    dailyCounts.set(key, current);
+  };
+
+  for (const timeslice of args.timeslices) {
+    const fromStageKey = resolveStageKey(timeslice.from_step_id, args.stageKeyByCanonId);
+    if (fromStageKey) {
+      const startedDay = toLosAngelesDateStartIso(timeslice.started_at);
+      if (startedDay) {
+        incrementDailyCount(fromStageKey, startedDay, 'entry_count');
+      }
+
+      const endedDay = toLosAngelesDateStartIso(timeslice.ended_at);
+      if (endedDay) {
+        incrementDailyCount(fromStageKey, endedDay, 'exit_count');
+      }
+    }
+
+    if (timeslice.from_step_id === null && timeslice.to_step_id !== null) {
+      const toStageKey = resolveStageKey(timeslice.to_step_id, args.stageKeyByCanonId);
+      const toStageMeta = toStageKey ? args.stageByPageId.get(toStageKey) : undefined;
+      const toStageNumber = normalizeStageNumberOrNull(toStageMeta?.stage_number);
+      if (toStageKey && toStageNumber === 1) {
+        const eventTs =
+          normalizeIsoTimestamp(timeslice.ended_at) ??
+          normalizeIsoTimestamp(timeslice.started_at) ??
+          normalizeIsoTimestamp(timeslice.last_edited_time) ??
+          normalizeIsoTimestamp(timeslice.created_time);
+        const eventDay = toLosAngelesDateStartIso(eventTs);
+        if (eventDay) {
+          incrementDailyCount(toStageKey, eventDay, 'entry_count');
+          args.onEntryEdgeCounted();
+        } else {
+          args.onEntryEdgeSkippedMissingTimestamp();
+        }
+      } else if (toStageKey) {
+        args.onNonStage1EntryEdgeObserved();
+      }
+    }
+  }
+
+  for (const occupancyRow of args.stageOccupancyHourlyRows) {
+    const key = `${occupancyRow.snapshot_day}|${occupancyRow.stage_key}`;
+    const current = occupancyByDayAndStage.get(key) ?? { peak: 0, total: 0, count: 0 };
+    current.peak = Math.max(current.peak, occupancyRow.item_count);
+    current.total += occupancyRow.item_count;
+    current.count += 1;
+    occupancyByDayAndStage.set(key, current);
+  }
+
+  const rowKeys = new Set<string>();
+  for (const key of dailyCounts.keys()) {
+    rowKeys.add(key);
+  }
+  for (const key of occupancyByDayAndStage.keys()) {
+    rowKeys.add(key);
+  }
+
+  const rows: StageThroughputDailyRow[] = [];
+  for (const key of Array.from(rowKeys).sort((a, b) => a.localeCompare(b))) {
+    const [bucketDay, stageKey] = key.split('|');
+    const stage = stageByKey.get(stageKey);
+    if (!stage || !bucketDay) {
+      continue;
+    }
+    const counts = dailyCounts.get(key) ?? { entry_count: 0, exit_count: 0 };
+    const occupancy = occupancyByDayAndStage.get(key) ?? { peak: 0, total: 0, count: 0 };
+    const bucketParts = parseDateLabel(bucketDay);
+    if (!bucketParts) {
+      continue;
+    }
+    const bucketN = bucketParts.year * 10000 + bucketParts.month * 100 + bucketParts.day;
+
+    rows.push({
+      bucket_day: bucketDay,
+      bucket_n: bucketN,
+      workflow_definition: stage.workflow_definition,
+      stage: stage.stage,
+      stage_n: stage.stage_n,
+      stage_key: stage.stage_key,
+      entry_count: counts.entry_count,
+      exit_count: counts.exit_count,
+      occupancy_peak: occupancy.peak,
+      occupancy_avg: occupancy.count > 0 ? occupancy.total / occupancy.count : 0
+    });
+  }
+
+  return rows.filter(
+    (row) => row.entry_count > 0 || row.exit_count > 0 || row.occupancy_peak > 0 || row.occupancy_avg > 0
+  );
+}
+
 function getLosAngelesDateParts(date: Date): { year: number; month: number; day: number } {
   const parts = DATE_PARTS_FORMATTER.formatToParts(date);
   const yearPart = parts.find((part) => part.type === 'year')?.value;
@@ -419,6 +659,26 @@ function getLosAngelesDateParts(date: Date): { year: number; month: number; day:
     throw new Error(`Failed to resolve Los Angeles date parts for timestamp: ${date.toISOString()}`);
   }
   return { year, month, day };
+}
+
+function toLosAngelesSnapshotLabel(value: string): string {
+  const asMs = Date.parse(value);
+  if (!Number.isFinite(asMs)) {
+    return value;
+  }
+  const formatted = SNAPSHOT_LABEL_FORMATTER.format(new Date(asMs));
+  return formatted.replace(' ', ' ');
+}
+
+function parseTimestampMs(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+  const asMs = Date.parse(value);
+  if (!Number.isFinite(asMs)) {
+    return null;
+  }
+  return asMs;
 }
 
 function parseDateLabel(value: string): { year: number; month: number; day: number } | null {

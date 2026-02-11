@@ -72,6 +72,64 @@ function extractFirstRelationId(rawValue: unknown): string | null {
   return typeof first === 'string' && first.length > 0 ? first : null;
 }
 
+function extractFirstRollupRelationId(rawValue: unknown): string | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const typed = rawValue as {
+    type?: string;
+    rollup?: { type?: string; array?: Array<{ type?: string; relation?: Array<{ id?: string }> }> };
+  };
+  if (typed.type !== 'rollup' || !typed.rollup || typed.rollup.type !== 'array') {
+    return null;
+  }
+  if (!Array.isArray(typed.rollup.array)) {
+    return null;
+  }
+  for (const item of typed.rollup.array) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    if (item.type !== 'relation' || !Array.isArray(item.relation) || item.relation.length === 0) {
+      continue;
+    }
+    const id = item.relation[0]?.id;
+    if (typeof id === 'string' && id.length > 0) {
+      return id;
+    }
+  }
+  return null;
+}
+
+function extractFirstRollupDateStart(rawValue: unknown): string | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const typed = rawValue as {
+    type?: string;
+    rollup?: { type?: string; array?: Array<{ type?: string; date?: { start?: string | null } | null }> };
+  };
+  if (typed.type !== 'rollup' || !typed.rollup || typed.rollup.type !== 'array') {
+    return null;
+  }
+  if (!Array.isArray(typed.rollup.array)) {
+    return null;
+  }
+  for (const item of typed.rollup.array) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    if (item.type !== 'date' || !item.date) {
+      continue;
+    }
+    const start = item.date.start;
+    if (typeof start === 'string' && start.length > 0) {
+      return start;
+    }
+  }
+  return null;
+}
+
 function extractTitle(rawValue: unknown): string | null {
   if (!rawValue || typeof rawValue !== 'object') {
     return null;
@@ -139,14 +197,14 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
     null;
 
   const workflowDefinitionSource = extractFirstRelationId(workflowRelationRaw);
-  const fromStepSource = extractFirstRelationId(fromStageRelationRaw);
-  const toStepSource = extractFirstRelationId(toStageRelationRaw);
+  const fromStepSource = extractFirstRollupRelationId(fromStageRelationRaw);
+  const toStepSource = extractFirstRollupRelationId(toStageRelationRaw);
   const workflowDefinitionId =
     workflowDefinitionSource ? stableEntityId('workflow_definition', workflowDefinitionSource) : null;
   const fromStepId = fromStepSource ? stableEntityId('workflow_stage', fromStepSource) : null;
   const toStepId = toStepSource ? stableEntityId('workflow_stage', toStepSource) : null;
-  const startedAt = extractDateStart(startedDateRaw);
-  const endedAt = extractDateStart(endedDateRaw);
+  const startedAt = extractFirstRollupDateStart(startedDateRaw) ?? extractDateStart(startedDateRaw);
+  const endedAt = extractFirstRollupDateStart(endedDateRaw) ?? extractDateStart(endedDateRaw);
 
   return timesliceSchema.parse({
     timeslice_id: timesliceIdFromPageId(record.pageId),

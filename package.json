@@ -11,7 +11,9 @@
     "test": "vitest run",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "cli": "tsx src/cli/index.ts"
+    "cli": "tsx src/cli/index.ts",
+    "diag:stages": "node scripts/diagnose-stage-relations.mjs",
+    "diagnose:stage-relations": "tsx scripts/diagnose-stage-relations.ts"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",
