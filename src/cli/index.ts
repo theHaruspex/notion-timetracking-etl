@@ -13,7 +13,7 @@ import { log } from '../lib/log.js';
 import { NotionAdapter } from '../ingress/notionAdapter.js';
 import { pullDatasetFromNotion } from '../ingress/pullNotion.js';
 import { latestDatasetDateDir, readDatasetJsonlForDate, readRawDatasetForDate } from '../normalize/io.js';
-import { normalizeDatasets } from '../normalize/normalizeDatasets.js';
+import { normalizeAndValidateDatasets } from '../normalize/normalizeDatasets.js';
 import { ensureDir } from '../lib/fs.js';
 import {
   PowerBiClient,
@@ -91,7 +91,7 @@ async function runNormalize(): Promise<void> {
   const workflowStagesRaw = await readRawDatasetForDate(rawBase, DATASET_NAMES.workflow_stages, wfStageDate);
   const timeslicesRaw = await readRawDatasetForDate(rawBase, DATASET_NAMES.timeslices, timesliceDate);
 
-  const normalized = normalizeDatasets({
+  const normalized = normalizeAndValidateDatasets({
     workflowDefinitionsRaw,
     workflowStagesRaw,
     timeslicesRaw
@@ -111,11 +111,20 @@ async function runNormalize(): Promise<void> {
     path.join(canonBase, DATASET_NAMES.timeslices, day, 'records.jsonl'),
     normalized.timeslices
   );
+  await writeJsonlSink(
+    path.join(canonBase, 'qualityIssues', normalized.qualityReport.run_date, 'qualityIssues.jsonl'),
+    normalized.qualityIssues
+  );
+
+  console.log(
+    `[quality] timeslices_total=${normalized.qualityReport.counts.timeslices_total} excluded_missing_workflow_definition=${normalized.qualityReport.counts.timeslices_excluded_missing_workflow_definition} issues_total=${normalized.qualityReport.counts.issues_total} no_to_step_in_run=${normalized.qualityReport.flags.no_to_step_in_run}`
+  );
 
   log.info('normalization finished', {
     workflowDefinitions: normalized.workflowDefinitions.length,
     workflowStages: normalized.workflowStages.length,
-    timeslices: normalized.timeslices.length
+    timeslices: normalized.timeslices.length,
+    qualityIssues: normalized.qualityIssues.length
   });
 }
 
