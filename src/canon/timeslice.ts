@@ -6,8 +6,13 @@ import { normalizeNullableString, stableEntityId, timesliceIdFromPageId } from '
 export const timesliceSchema = z.object({
   timeslice_id: z.string(),
   workflow_definition_id: z.string().nullable(),
+  workflow_record_id: z.string().nullable(),
   from_step_id: z.string().nullable(),
   to_step_id: z.string().nullable(),
+  from_task_page_id: z.string().nullable(),
+  to_task_page_id: z.string().nullable(),
+  from_task_name: z.string().nullable(),
+  to_task_name: z.string().nullable(),
   started_at: z.string().nullable(),
   ended_at: z.string().nullable(),
   duration_seconds: z.number().nullable(),
@@ -130,6 +135,39 @@ function extractFirstRollupDateStart(rawValue: unknown): string | null {
   return null;
 }
 
+function extractFirstRollupRichTextPlainText(rawValue: unknown): string | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const typed = rawValue as {
+    type?: string;
+    rollup?: {
+      type?: string;
+      array?: Array<{ type?: string; rich_text?: Array<{ plain_text?: string }> }>;
+    };
+  };
+  if (typed.type !== 'rollup' || !typed.rollup || typed.rollup.type !== 'array') {
+    return null;
+  }
+  if (!Array.isArray(typed.rollup.array)) {
+    return null;
+  }
+
+  for (const item of typed.rollup.array) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+    if (item.type !== 'rich_text' || !Array.isArray(item.rich_text)) {
+      continue;
+    }
+    const text = item.rich_text.map((part) => part?.plain_text ?? '').join('').trim();
+    if (text.length > 0) {
+      return text;
+    }
+  }
+  return null;
+}
+
 function extractTitle(rawValue: unknown): string | null {
   if (!rawValue || typeof rawValue !== 'object') {
     return null;
@@ -182,10 +220,15 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
 
   const ids = notionConfig.propertyIds.timeslices;
   const workflowRelationRaw = rawProperties[ids.workflowDefinitionRel];
+  const workflowRecordRelationRaw = rawProperties[ids.workflowRecordRel];
   const fromStageRelationRaw = rawProperties[ids.fromStageRel];
   const toStageRelationRaw = rawProperties[ids.toStageRel];
   const startedDateRaw = rawProperties[ids.startedAtDate];
   const endedDateRaw = rawProperties[ids.endedAtDate];
+  const fromTaskPageIdRaw = rawProperties[ids.fromTaskPageId];
+  const toTaskPageIdRaw = rawProperties[ids.toTaskPageId];
+  const fromTaskNameRaw = rawProperties[ids.fromTaskName];
+  const toTaskNameRaw = rawProperties[ids.toTaskName];
 
   const pageTitle =
     (rawProperties[notionConfig.propertyIds.workflowDefinitions.title]
@@ -197,10 +240,18 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
     null;
 
   const workflowDefinitionSource = extractFirstRelationId(workflowRelationRaw);
+  const workflowRecordSource = extractFirstRelationId(workflowRecordRelationRaw);
   const fromStepSource = extractFirstRollupRelationId(fromStageRelationRaw);
   const toStepSource = extractFirstRollupRelationId(toStageRelationRaw);
+  const fromTaskPageId = extractFirstRollupRichTextPlainText(fromTaskPageIdRaw);
+  const toTaskPageId = extractFirstRollupRichTextPlainText(toTaskPageIdRaw);
+  const fromTaskName = extractFirstRollupRichTextPlainText(fromTaskNameRaw);
+  const toTaskName = extractFirstRollupRichTextPlainText(toTaskNameRaw);
   const workflowDefinitionId =
     workflowDefinitionSource ? stableEntityId('workflow_definition', workflowDefinitionSource) : null;
+  const workflowRecordId = workflowRecordSource
+    ? stableEntityId('workflow_record', workflowRecordSource)
+    : null;
   const fromStepId = fromStepSource ? stableEntityId('workflow_stage', fromStepSource) : null;
   const toStepId = toStepSource ? stableEntityId('workflow_stage', toStepSource) : null;
   const startedAt = extractFirstRollupDateStart(startedDateRaw) ?? extractDateStart(startedDateRaw);
@@ -209,8 +260,13 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
   return timesliceSchema.parse({
     timeslice_id: timesliceIdFromPageId(record.pageId),
     workflow_definition_id: workflowDefinitionId,
+    workflow_record_id: workflowRecordId,
     from_step_id: fromStepId,
     to_step_id: toStepId,
+    from_task_page_id: fromTaskPageId,
+    to_task_page_id: toTaskPageId,
+    from_task_name: fromTaskName,
+    to_task_name: toTaskName,
     started_at: startedAt,
     ended_at: endedAt,
     duration_seconds: computeDurationSeconds(startedAt, endedAt),

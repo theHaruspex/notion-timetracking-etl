@@ -91,10 +91,15 @@ type NotionConfig = {
   propertyIds: {
     timeslices: {
       workflowDefinitionRel: string;
+      workflowRecordRel: string;
       fromStageRel: string;
       toStageRel: string;
       startedAtDate: string;
       endedAtDate: string;
+      fromTaskPageId: string;
+      toTaskPageId: string;
+      fromTaskName: string;
+      toTaskName: string;
       fromEventRel?: string;
       toEventRel?: string;
     };
@@ -118,11 +123,16 @@ export const notionConfig: NotionConfig = {
   propertyIds: {
     timeslices: {
       workflowDefinitionRel: 'U%3CU%7B',
+      workflowRecordRel: 'U%3CU%7B',
       // IMPORTANT: stage refs are rollups (array->relation), not direct event relations.
       fromStageRel: 'Pe%3A%7C',
       toStageRel: 'KgCD',
       startedAtDate: 'w%5Czt',
       endedAtDate: 'cZbu',
+      fromTaskPageId: 'fA%5DF',
+      toTaskPageId: 'AWGN',
+      fromTaskName: 'iNer',
+      toTaskName: 'E%3FuS',
       fromEventRel: 'yBeO',
       toEventRel: '%7Dg%40%5E'
     },
