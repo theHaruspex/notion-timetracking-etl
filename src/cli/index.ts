@@ -26,6 +26,7 @@ import {
 } from '../sinks/pbi/index.js';
 import { findDatasetId, findMostRecentEntryForGroup, loadRegistry } from '../sinks/pbi/state/datasetRegistry.js';
 import { derivePbiTableRows } from '../sinks/pbi/refresh/derive/index.js';
+import { writeExcelFile } from '../sinks/excel/index.js';
 import type { Timeslice } from '../canon/timeslice.js';
 import type { WorkflowDefinition } from '../canon/workflowDefinition.js';
 import type { WorkflowStage } from '../canon/workflowStage.js';
@@ -215,6 +216,62 @@ async function runPipelineEndToEnd(): Promise<void> {
   await runPbiRefresh();
 }
 
+async function runExcelExport(): Promise<void> {
+  const appConfig = loadConfig();
+
+  const canonBase = path.join(appConfig.resolvedDataDir, 'canon');
+  const wfDefDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.workflow_definitions);
+  const wfStageDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.workflow_stages);
+  const timesliceDate = await latestDatasetDateDir(canonBase, DATASET_NAMES.timeslices);
+  if (!wfDefDate || !wfStageDate || !timesliceDate) {
+    throw new Error('Missing canonical datasets. Run normalize before excel:export.');
+  }
+
+  const workflowDefinitions = await readDatasetJsonlForDate<WorkflowDefinition>(
+    canonBase,
+    DATASET_NAMES.workflow_definitions,
+    wfDefDate
+  );
+  const workflowStages = await readDatasetJsonlForDate<WorkflowStage>(
+    canonBase,
+    DATASET_NAMES.workflow_stages,
+    wfStageDate
+  );
+  const timeslices = await readDatasetJsonlForDate<Timeslice>(
+    canonBase,
+    DATASET_NAMES.timeslices,
+    timesliceDate
+  );
+
+  const tableRowsByName = derivePbiTableRows({
+    workflowDefinitions,
+    workflowStages,
+    timeslices
+  });
+
+  const day = utcDateStamp();
+  const outputDir = path.join(appConfig.resolvedDataDir, 'excel');
+  await ensureDir(outputDir);
+  const outputPath = path.join(outputDir, `timetracking_export_${day}.xlsx`);
+
+  await writeExcelFile({
+    tableRowsByName,
+    outputPath
+  });
+
+  const tableRowCounts = Object.fromEntries(
+    Object.entries(tableRowsByName).map(([name, rows]) => [name, rows.length])
+  );
+
+  log.info('excel export complete', {
+    outputPath,
+    workflowDefinitionsDate: wfDefDate,
+    workflowStagesDate: wfStageDate,
+    timeslicesDate: timesliceDate,
+    tableRowCounts
+  });
+}
+
 async function runPbiProvision(): Promise<void> {
   const appConfig = loadConfig();
   const pbiConfig = loadPbiConfig();
@@ -372,6 +429,10 @@ program
   .command('run:end-to-end')
   .description('Run pull:notion, normalize, pbi:provision, then pbi:refresh')
   .action(runPipelineEndToEnd);
+program
+  .command('excel:export')
+  .description('Export derived tables to Excel file (one sheet per table)')
+  .action(runExcelExport);
 
 program.parseAsync(process.argv).catch((error) => {
   log.error('command failed', error);
