@@ -32,6 +32,7 @@ export interface DimWorkflowRow {
 
 export interface DimStageRow {
   stage_key: string;
+  color_hex: string;
   workflow_definition_key: string;
   workflow_definition: string;
   stage: string;
@@ -79,11 +80,6 @@ export interface StageThroughputDailyRow {
   exit_count: number;
   occupancy_peak: number;
   occupancy_avg: number;
-}
-
-export interface ColorPaletteRow {
-  color_n: number;
-  hex: string;
 }
 
 export type PbiTableRowsByName = Record<string, object[]>;

@@ -13,8 +13,7 @@ const REQUIRED_TABLE_NAMES = [
   'DimDate',
   'DimPlaybackFrame',
   'StageOccupancy_Hourly',
-  'StageThroughput_Daily',
-  'ColorPalette'
+  'StageThroughput_Daily'
 ] as const;
 const SUPPORTED_PUSH_COLUMN_TYPES = new Set(['Int64', 'Double', 'Boolean', 'String', 'DateTime']);
 

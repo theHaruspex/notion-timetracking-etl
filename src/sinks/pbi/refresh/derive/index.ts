@@ -1,8 +1,8 @@
 import type { Timeslice as CanonTimeslice } from '../../../../canon/timeslice.js';
 import type { WorkflowDefinition as CanonWorkflowDefinition } from '../../../../canon/workflowDefinition.js';
 import type { WorkflowStage as CanonWorkflowStage } from '../../../../canon/workflowStage.js';
+import { sha256 } from '../../../../lib/hash.js';
 import type {
-  ColorPaletteRow,
   DimDateRow,
   DimPlaybackFrameRow,
   DimStageRow,
@@ -49,47 +49,46 @@ const EXPECTED_TABLE_NAMES = [
   'DimDate',
   'DimPlaybackFrame',
   'StageOccupancy_Hourly',
-  'StageThroughput_Daily',
-  'ColorPalette'
+  'StageThroughput_Daily'
 ] as const;
 
 const COLOR_HEX_VALUES: string[] = [
-  '#01B8AA',
-  '#374649',
-  '#FD625E',
-  '#F2C80F',
-  '#5F6B6D',
-  '#8AD4EB',
-  '#FE9666',
-  '#A66999',
-  '#3599B8',
-  '#DFBFBF',
-  '#4AC5BB',
-  '#5F6B6D',
-  '#FB8281',
-  '#F4D25A',
-  '#7F898A',
-  '#A4DDEE',
-  '#FDAB89',
-  '#B687AC',
-  '#28738A',
-  '#A78F8F',
-  '#168980',
-  '#293537',
-  '#BB4A4A',
-  '#B59525',
-  '#475052',
-  '#6AABBE',
-  '#C6765B',
-  '#7B4F71',
-  '#1D5C73',
-  '#B69999',
-  '#0F5C57',
-  '#1C2426',
-  '#7B3131',
-  '#7A6319',
-  '#2F3638',
-  '#477383'
+  '#FF68A0',
+  '#FF6C8B',
+  '#FF7076',
+  '#FF735F',
+  '#FF7643',
+  '#FF7800',
+  '#EF8600',
+  '#E19000',
+  '#D59800',
+  '#C89F00',
+  '#BBA500',
+  '#ABAC00',
+  '#98B300',
+  '#7BBB00',
+  '#3DC500',
+  '#00C55B',
+  '#00C380',
+  '#00C197',
+  '#00BFA8',
+  '#00BDB6',
+  '#00BBC3',
+  '#00B9CF',
+  '#00B7DD',
+  '#00B4EC',
+  '#0EAFFF',
+  '#51A9FF',
+  '#6DA4FF',
+  '#829EFF',
+  '#9398FF',
+  '#A491FF',
+  '#B688FF',
+  '#CA7BFF',
+  '#E365FF',
+  '#FF41F7',
+  '#FF56D2',
+  '#FF61B7'
 ];
 
 export function derivePbiTableRows(input: {
@@ -196,6 +195,7 @@ export function derivePbiTableRows(input: {
 
     stageRowsByKey.set(stageKey, {
       stage_key: stageKey,
+      color_hex: assignStageColorHex(stageKey),
       workflow_definition_key: workflowDefinitionKey,
       workflow_definition: workflowDefinitionLabel,
       stage: workflowStage.stage_label ?? stageKey,
@@ -276,10 +276,6 @@ export function derivePbiTableRows(input: {
       nonStage1EntryEdgeObserved += 1;
     }
   });
-  const colorPaletteRows: ColorPaletteRow[] = COLOR_HEX_VALUES.map((hex, index) => ({
-    color_n: index + 1,
-    hex
-  }));
 
   const tableRowsByName: PbiTableRowsByName = {
     FactTimeslices: factRows,
@@ -288,8 +284,7 @@ export function derivePbiTableRows(input: {
     DimDate: dimDateRows,
     DimPlaybackFrame: dimPlaybackFrameRows,
     StageOccupancy_Hourly: stageOccupancyHourlyRows,
-    StageThroughput_Daily: stageThroughputDailyRows,
-    ColorPalette: colorPaletteRows
+    StageThroughput_Daily: stageThroughputDailyRows
   };
   assertExpectedTableKeys(tableRowsByName);
   console.warn('[derive] Stage 3 counters', {
@@ -709,4 +704,11 @@ function assertExpectedTableKeys(tableRowsByName: PbiTableRowsByName): void {
 
 function pad2(value: number): string {
   return value.toString().padStart(2, '0');
+}
+
+function assignStageColorHex(stageKey: string): string {
+  const digest = sha256(stageKey);
+  const numericPrefix = Number.parseInt(digest.slice(0, 8), 16);
+  const zeroBased = Number.isFinite(numericPrefix) ? numericPrefix % COLOR_HEX_VALUES.length : 0;
+  return COLOR_HEX_VALUES[zeroBased];
 }

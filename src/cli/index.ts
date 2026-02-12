@@ -208,6 +208,13 @@ async function runAll(): Promise<void> {
   await runNormalize();
 }
 
+async function runPipelineEndToEnd(): Promise<void> {
+  await runPullNotion();
+  await runNormalize();
+  await runPbiProvision();
+  await runPbiRefresh();
+}
+
 async function runPbiProvision(): Promise<void> {
   const appConfig = loadConfig();
   const pbiConfig = loadPbiConfig();
@@ -361,6 +368,10 @@ program
   .action(runPbiRefresh);
 program.command('normalize').description('Normalize latest raw records').action(runNormalize);
 program.command('run').description('Run pull:notion then normalize').action(runAll);
+program
+  .command('run:end-to-end')
+  .description('Run pull:notion, normalize, pbi:provision, then pbi:refresh')
+  .action(runPipelineEndToEnd);
 
 program.parseAsync(process.argv).catch((error) => {
   log.error('command failed', error);

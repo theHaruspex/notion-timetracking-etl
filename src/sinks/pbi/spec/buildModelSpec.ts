@@ -119,6 +119,7 @@ export function buildModelSpec(datasetName: string): PbiDatasetSpec {
       name: 'DimStage',
       columns: [
         { name: 'stage_key', dataType: 'String' },
+        { name: 'color_hex', dataType: 'String' },
         { name: 'workflow_definition_key', dataType: 'String' },
         { name: 'workflow_definition', dataType: 'String' },
         { name: 'stage', dataType: 'String' },
@@ -174,13 +175,6 @@ export function buildModelSpec(datasetName: string): PbiDatasetSpec {
         { name: 'exit_count', dataType: 'Int64' },
         { name: 'occupancy_peak', dataType: 'Int64' },
         { name: 'occupancy_avg', dataType: 'Double' }
-      ]
-    },
-    {
-      name: 'ColorPalette',
-      columns: [
-        { name: 'color_n', dataType: 'Int64' },
-        { name: 'hex', dataType: 'String' }
       ]
     }
   );
