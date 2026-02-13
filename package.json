@@ -13,7 +13,8 @@
     "format": "prettier --write .",
     "cli": "tsx src/cli/index.ts",
     "diag:stages": "node scripts/diagnose-stage-relations.mjs",
-    "diagnose:stage-relations": "tsx scripts/diagnose-stage-relations.ts"
+    "diagnose:stage-relations": "tsx scripts/diagnose-stage-relations.ts",
+    "validate:workflow-instance-page-name": "tsx scripts/validate-workflow-instance-page-name.ts"
   },
   "dependencies": {
     "@notionhq/client": "^2.2.15",

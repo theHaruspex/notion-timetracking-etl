@@ -7,6 +7,12 @@ export const timesliceSchema = z.object({
   timeslice_id: z.string(),
   workflow_definition_id: z.string().nullable(),
   workflow_record_id: z.string().nullable(),
+  workflow_instance_page_name: z.string().nullable(),
+  from_event_id: z.string().nullable(),
+  to_event_id: z.string().nullable(),
+  from_status: z.string().nullable(),
+  to_status: z.string().nullable(),
+  workflow_type: z.string().nullable(),
   from_step_id: z.string().nullable(),
   to_step_id: z.string().nullable(),
   from_task_page_id: z.string().nullable(),
@@ -182,6 +188,20 @@ function extractTitle(rawValue: unknown): string | null {
   return normalizeNullableString(joined);
 }
 
+function extractFormulaString(rawValue: unknown): string | null {
+  if (!rawValue || typeof rawValue !== 'object') {
+    return null;
+  }
+  const typed = rawValue as {
+    type?: string;
+    formula?: { type?: string; string?: string | null } | null;
+  };
+  if (typed.type !== 'formula' || !typed.formula || typed.formula.type !== 'string') {
+    return null;
+  }
+  return normalizeNullableString(typed.formula.string ?? null);
+}
+
 function requireConfiguredTimeslicePropertyIds(): void {
   const required = notionConfig.propertyIds.timeslices;
   const missing = Object.entries(required)
@@ -221,14 +241,20 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
   const ids = notionConfig.propertyIds.timeslices;
   const workflowRelationRaw = rawProperties[ids.workflowDefinitionRel];
   const workflowRecordRelationRaw = rawProperties[ids.workflowRecordRel];
+  const workflowInstancePageNameRaw = rawProperties[ids.workflowInstancePageName];
+  const fromEventRelationRaw = ids.fromEventRel ? rawProperties[ids.fromEventRel] : undefined;
+  const toEventRelationRaw = ids.toEventRel ? rawProperties[ids.toEventRel] : undefined;
   const fromStageRelationRaw = rawProperties[ids.fromStageRel];
   const toStageRelationRaw = rawProperties[ids.toStageRel];
+  const fromStatusRaw = ids.fromStatus ? rawProperties[ids.fromStatus] : undefined;
+  const toStatusRaw = ids.toStatus ? rawProperties[ids.toStatus] : undefined;
   const startedDateRaw = rawProperties[ids.startedAtDate];
   const endedDateRaw = rawProperties[ids.endedAtDate];
   const fromTaskPageIdRaw = rawProperties[ids.fromTaskPageId];
   const toTaskPageIdRaw = rawProperties[ids.toTaskPageId];
   const fromTaskNameRaw = rawProperties[ids.fromTaskName];
   const toTaskNameRaw = rawProperties[ids.toTaskName];
+  const workflowTypeRaw = ids.workflowType ? rawProperties[ids.workflowType] : undefined;
 
   const pageTitle =
     (rawProperties[notionConfig.propertyIds.workflowDefinitions.title]
@@ -239,14 +265,20 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
       .find((value): value is string => typeof value === 'string' && value.length > 0) ??
     null;
 
-  const workflowDefinitionSource = extractFirstRelationId(workflowRelationRaw);
+  const workflowDefinitionSource = extractFirstRollupRelationId(workflowRelationRaw);
   const workflowRecordSource = extractFirstRelationId(workflowRecordRelationRaw);
+  const workflowInstancePageName = extractFirstRollupRichTextPlainText(workflowInstancePageNameRaw);
+  const fromEventSource = extractFirstRelationId(fromEventRelationRaw);
+  const toEventSource = extractFirstRelationId(toEventRelationRaw);
   const fromStepSource = extractFirstRollupRelationId(fromStageRelationRaw);
   const toStepSource = extractFirstRollupRelationId(toStageRelationRaw);
+  const fromStatus = extractFirstRollupRichTextPlainText(fromStatusRaw);
+  const toStatus = extractFirstRollupRichTextPlainText(toStatusRaw);
   const fromTaskPageId = extractFirstRollupRichTextPlainText(fromTaskPageIdRaw);
   const toTaskPageId = extractFirstRollupRichTextPlainText(toTaskPageIdRaw);
   const fromTaskName = extractFirstRollupRichTextPlainText(fromTaskNameRaw);
   const toTaskName = extractFirstRollupRichTextPlainText(toTaskNameRaw);
+  const workflowType = extractFormulaString(workflowTypeRaw);
   const workflowDefinitionId =
     workflowDefinitionSource ? stableEntityId('workflow_definition', workflowDefinitionSource) : null;
   const workflowRecordId = workflowRecordSource
@@ -261,6 +293,12 @@ export function buildTimeslice(record: RawRecord): Timeslice | null {
     timeslice_id: timesliceIdFromPageId(record.pageId),
     workflow_definition_id: workflowDefinitionId,
     workflow_record_id: workflowRecordId,
+    workflow_instance_page_name: workflowInstancePageName,
+    from_event_id: fromEventSource ? stableEntityId('event', fromEventSource) : null,
+    to_event_id: toEventSource ? stableEntityId('event', toEventSource) : null,
+    from_status: fromStatus,
+    to_status: toStatus,
+    workflow_type: workflowType,
     from_step_id: fromStepId,
     to_step_id: toStepId,
     from_task_page_id: fromTaskPageId,
