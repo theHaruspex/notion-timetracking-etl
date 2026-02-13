@@ -154,8 +154,8 @@ export function derivePbiTableRows(input: {
 
     factRows.push({
       Name: item.page_title ?? item.timeslice_id,
-      'From Event': null,
-      'From Status': null,
+      'From Event': toUuidMaybe(item.from_event_id) ?? item.from_event_id ?? null,
+      'From Status': item.from_status ?? null,
       'From Step N': fromStageNumber,
       'From Task Name': item.from_task_name ?? null,
       'From Task Page ID': item.from_task_page_id ?? null,
@@ -164,8 +164,8 @@ export function derivePbiTableRows(input: {
       'Minutes Diff':
         typeof item.duration_seconds === 'number' ? Math.round(item.duration_seconds / 60) : null,
       'Slice Label': item.page_title ?? item.timeslice_id,
-      'To Event': null,
-      'To Status': null,
+      'To Event': toUuidMaybe(item.to_event_id) ?? item.to_event_id ?? null,
+      'To Status': item.to_status ?? null,
       'To Step N': toStageNumber,
       'To Task Name': item.to_task_name ?? null,
       'To Task Page ID': item.to_task_page_id ?? null,
@@ -173,7 +173,7 @@ export function derivePbiTableRows(input: {
       'To Workflow Step': toStageLabel,
       'Workflow Definition': workflowDefinitionLabel,
       'Workflow Record': toUuidMaybe(item.workflow_record_id) ?? item.workflow_record_id ?? null,
-      'Workflow Type': null,
+      'Workflow Type': item.workflow_type ?? null,
       'To DateTime': toDateTime,
       'To Date': toDate,
       from_stage_key: fromStageKey,
